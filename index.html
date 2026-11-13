@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fobos Mini — Pemantauan</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="lib/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <div class="brand"><b>Fobos Mini</b> <span class="muted">pemantauan posisi &amp; kondisi jalan</span></div>
+  <div class="hdr-right">
+    <span id="connBadge" class="badge off">Terputus</span>
+    <button id="btnConnect" class="primary">Sambungkan</button>
+    <button id="btnSessions">Rekaman</button>
+    <button id="btnSettings">Pengaturan</button>
+  </div>
+</header>
+
+<main>
+  <aside id="sidebar">
+    <div class="side-head">
+      <span>Perangkat</span>
+      <span class="muted small" id="devCount">0</span>
+    </div>
+    <div id="devList"><p class="muted small pad">Belum ada perangkat. Sambungkan ke broker lalu nyalakan Fobos Mini (atau jalankan simulator).</p></div>
+  </aside>
+  <section id="mapWrap">
+    <div id="map"></div>
+    <div id="legend" class="panel">
+      <div class="seg">
+        <button data-mode="q" class="on">Kualitas posisi</button>
+        <button data-mode="v">Getaran</button>
+      </div>
+      <div id="legendBody"></div>
+      <label class="small"><input type="checkbox" id="chkFollow" checked> ikuti perangkat terpilih</label>
+    </div>
+    <div id="vibPanel" class="panel">
+      <div class="small"><b id="vibTitle">Indeks getaran</b> <span class="muted">(RMS percepatan searah gravitasi per detik, m/s², relatif — bukan IRI)</span></div>
+      <canvas id="vibCanvas" width="420" height="110"></canvas>
+    </div>
+  </section>
+</main>
+
+<dialog id="dlgSettings">
+  <form method="dialog" id="frmSettings">
+    <h3>Pengaturan koneksi</h3>
+    <label>Broker yang dipakai
+      <select name="mode">
+        <option value="cloud">Cloud (flespi, lewat internet)</option>
+        <option value="local">Lokal (laptop, satu hotspot)</option>
+      </select>
+    </label>
+    <fieldset>
+      <legend>Cloud — broker MQTT (flespi)</legend>
+      <label>URL WebSocket <input name="cloudUrl" placeholder="wss://mqtt.flespi.io:443"></label>
+      <label>Username / token <input name="cloudUser" type="password" autocomplete="off" placeholder="tempel token flespi untuk WEB (64 karakter)"></label>
+      <label>Password <span class="muted small">(flespi: kosongkan)</span><input name="cloudPass" type="password" autocomplete="off"></label>
+      <label class="small"><input type="checkbox" name="remember"> ingat token/password di browser ini (centang hanya di laptop/HP anda sendiri)</label>
+    </fieldset>
+    <fieldset>
+      <legend>Lokal — tools/fobos_local.py</legend>
+      <label>URL WebSocket <input name="localUrl" placeholder="ws://192.168.43.100:9001"></label>
+      <p class="small muted">Mode lokal hanya jalan bila halaman ini dibuka dari laptop (http://IP-laptop:8000), bukan dari GitHub Pages (https).</p>
+    </fieldset>
+    <label>Awalan topik <input name="prefix" value="fobos"></label>
+    <label>Batas kelas getaran (m/s², dipisah koma) <input name="vibTh" value="0.5,1,2"></label>
+    <label class="small"><input type="checkbox" name="autoZip" checked> unduh otomatis 1 file .zip (posisi, IMU, UBX) saat Stop Record</label>
+    <div class="row-end">
+      <button value="cancel">Batal</button>
+      <button value="save" class="primary">Simpan</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="dlgSessions">
+  <h3>Rekaman (Record) tersimpan di browser ini</h3>
+  <p class="small muted">Selama Record, browser menyimpan: posisi 10 Hz (CSV), IMU ringkasan 5 Hz (CSV), dan UBX RAWX 1 Hz + SFRBX. Salinan lengkap (RAWX penuh, IMU 200 Hz) selalu ada di kartu SD Fobos Mini, satu set file per nyala.</p>
+  <div id="sessList"></div>
+  <div class="row-end"><button id="btnCloseSess">Tutup</button></div>
+</dialog>
+
+<div id="toast"></div>
+
+<script src="lib/leaflet.js"></script>
+<script src="lib/mqtt.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
