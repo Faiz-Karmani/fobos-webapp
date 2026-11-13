@@ -2,7 +2,8 @@
 <html lang="id">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#14233c">
 <title>Fobos Mini — Pemantauan</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="lib/leaflet.css">
@@ -10,37 +11,99 @@
 </head>
 <body>
 <header>
-  <div class="brand"><b>Fobos Mini</b> <span class="muted">pemantauan posisi &amp; kondisi jalan</span></div>
+  <div class="brand"><b>Fobos Mini</b> <span class="muted sub">pemantauan posisi &amp; kondisi jalan</span></div>
   <div class="hdr-right">
     <span id="connBadge" class="badge off">Terputus</span>
     <button id="btnConnect" class="primary">Sambungkan</button>
-    <button id="btnSessions">Rekaman</button>
-    <button id="btnSettings">Pengaturan</button>
+    <button class="sec" data-go="sessions">Rekaman</button>
+    <button class="sec" data-go="replay">Putar ulang</button>
+    <button class="sec" data-go="expo">Mode pameran</button>
+    <button class="sec" data-go="settings">Pengaturan</button>
+    <button id="btnMenu" class="icon" aria-label="Menu" aria-haspopup="true">⋮</button>
+    <div id="menuPop" hidden>
+      <button data-go="sessions">Rekaman</button>
+      <button data-go="replay">Putar ulang</button>
+      <button data-go="expo">Mode pameran</button>
+      <button data-go="settings">Pengaturan</button>
+    </div>
   </div>
 </header>
 
-<main>
+<main id="main" data-sheet="min">
   <aside id="sidebar">
-    <div class="side-head">
-      <span>Perangkat</span>
-      <span class="muted small" id="devCount">0</span>
+    <div class="side-head" id="sideHead">
+      <span class="grip" aria-hidden="true"></span>
+      <span class="sh-title">Perangkat <span class="muted small" id="devCount">0</span></span>
+      <span class="sh-sum small" id="sheetSum"></span>
+      <button class="icon tog" id="btnSide" aria-label="Tutup/buka panel perangkat">«</button>
     </div>
-    <div id="devList"><p class="muted small pad">Belum ada perangkat. Sambungkan ke broker lalu nyalakan Fobos Mini (atau jalankan simulator).</p></div>
+    <div id="devList"><p class="muted small pad">Belum ada perangkat. Sambungkan ke broker lalu nyalakan Fobos Mini, jalankan simulator, atau pilih <b>Putar ulang</b> untuk memutar rekaman.</p></div>
   </aside>
   <section id="mapWrap">
     <div id="map"></div>
-    <div id="legend" class="panel">
-      <div class="seg">
-        <button data-mode="q" class="on">Kualitas posisi</button>
-        <button data-mode="v">Getaran</button>
+
+    <div class="corner tl" id="cTL">
+      <button id="btnSideOpen" class="chip" hidden>☰ Perangkat <span id="devCount2">0</span></button>
+      <div id="sumPanel" class="panel" data-key="sum">
+        <div class="ph"><b>Ringkasan</b> <span class="muted small" id="sumWho"></span><button class="icon tog" aria-label="Tutup/buka">▾</button></div>
+        <div class="pb"><div id="sumBody" class="sumgrid"><span class="muted small">Belum ada jejak.</span></div></div>
       </div>
-      <div id="legendBody"></div>
-      <label class="small"><input type="checkbox" id="chkFollow" checked> ikuti perangkat terpilih</label>
     </div>
-    <div id="vibPanel" class="panel">
-      <div class="small"><b id="vibTitle">Indeks getaran</b> <span class="muted">(RMS percepatan searah gravitasi per detik, m/s², relatif — bukan IRI)</span></div>
-      <canvas id="vibCanvas" width="420" height="110"></canvas>
+
+    <div class="corner tr" id="cTR">
+      <div id="legend" class="panel" data-key="legend">
+        <div class="ph"><b>Keterangan</b><button class="icon tog" aria-label="Tutup/buka">▾</button></div>
+        <div class="pb">
+          <div class="seg">
+            <button data-mode="q" class="on">Kualitas</button>
+            <button data-mode="v">Getaran</button>
+            <button data-mode="s">Segmen</button>
+          </div>
+          <div id="legendBody"></div>
+          <label class="small"><input type="checkbox" id="chkFollow" checked> ikuti perangkat terpilih</label>
+          <label class="small"><input type="checkbox" id="chkAcc" checked> lingkaran ketelitian</label>
+          <label class="small"><input type="checkbox" id="chkShock" checked> penanda guncangan</label>
+        </div>
+      </div>
     </div>
+
+    <div class="corner bl" id="cBL">
+      <div id="vibPanel" class="panel" data-key="vib">
+        <div class="ph"><b id="vibTitle">Indeks getaran</b><button class="icon tog" aria-label="Tutup/buka">▾</button></div>
+        <div class="pb">
+          <div class="small muted">RMS percepatan searah gravitasi per detik (m/s²), relatif — bukan IRI</div>
+          <canvas id="vibCanvas"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="playBar" hidden>
+      <button id="rpPlay" class="primary icon" aria-label="Putar/jeda">▶</button>
+      <input id="rpSlider" type="range" min="0" max="1000" value="0" aria-label="Posisi waktu">
+      <span id="rpTime" class="small">00:00:00 / 00:00:00</span>
+      <select id="rpSpeed" aria-label="Kecepatan putar">
+        <option value="1">1×</option><option value="2">2×</option><option value="5" selected>5×</option><option value="10">10×</option><option value="20">20×</option>
+      </select>
+      <label class="small nowrap"><input type="checkbox" id="rpSkip" checked> lewati jeda</label>
+      <span id="rpName" class="small muted"></span>
+      <button id="rpExit" class="icon" aria-label="Tutup putar ulang">✕</button>
+    </div>
+
+    <div id="hud" hidden>
+      <div class="hud-top">
+        <div class="hud-id"><span id="hudId">–</span> <span id="hudMode" class="hud-tag">LANGSUNG</span></div>
+        <div id="hudQ" class="hud-q q0">TANPA FIX</div>
+      </div>
+      <div class="hud-big">
+        <div><span class="hl">Ketelitian</span><b id="hudAcc">–</b></div>
+        <div><span class="hl">Satelit</span><b id="hudSv">–</b></div>
+        <div><span class="hl">Kecepatan</span><b id="hudSpd">–</b></div>
+        <div><span class="hl">Getaran</span><b id="hudVib">–</b></div>
+      </div>
+      <div class="hud-cmp" id="hudCmp"></div>
+      <div id="hudSum" class="hud-sum"></div>
+    </div>
+    <button id="btnExpoExit" hidden>✕ <span class="lbl">Keluar mode pameran</span></button>
   </section>
 </main>
 
@@ -65,8 +128,16 @@
       <label>URL WebSocket <input name="localUrl" placeholder="ws://192.168.43.100:9001"></label>
       <p class="small muted">Mode lokal hanya jalan bila halaman ini dibuka dari laptop (http://IP-laptop:8000), bukan dari GitHub Pages (https).</p>
     </fieldset>
-    <label>Awalan topik <input name="prefix" value="fobos"></label>
-    <label>Batas kelas getaran (m/s², dipisah koma) <input name="vibTh" value="0.5,1,2"></label>
+    <fieldset>
+      <legend>Tampilan</legend>
+      <label>Awalan topik <input name="prefix" value="fobos"></label>
+      <label>Batas kelas getaran (m/s², dipisah koma) <input name="vibTh" value="0.5,1,2"></label>
+      <label>Ambang penanda guncangan (m/s²) <input name="shockTh" value="2" inputmode="decimal"></label>
+      <label>Panjang segmen kondisi jalan (m)
+        <select name="segLen"><option value="10">10 m</option><option value="20">20 m</option><option value="50">50 m</option><option value="100">100 m</option></select>
+      </label>
+      <label>Rujukan ketelitian GNSS standar (m) <input name="refAcc" value="3.3" inputmode="decimal"></label>
+    </fieldset>
     <label class="small"><input type="checkbox" name="autoZip" checked> unduh otomatis 1 file .zip (posisi, IMU, UBX) saat Stop Record</label>
     <div class="row-end">
       <button value="cancel">Batal</button>
@@ -80,6 +151,26 @@
   <p class="small muted">Selama Record, browser menyimpan: posisi 10 Hz (CSV), IMU ringkasan 5 Hz (CSV), dan UBX RAWX 1 Hz + SFRBX. Salinan lengkap (RAWX penuh, IMU 200 Hz) selalu ada di kartu SD Fobos Mini, satu set file per nyala.</p>
   <div id="sessList"></div>
   <div class="row-end"><button id="btnCloseSess">Tutup</button></div>
+</dialog>
+
+<dialog id="dlgReplay">
+  <h3>Putar ulang rekaman</h3>
+  <p class="small muted">Untuk demo di dalam ruangan (pameran) ketika RTK tidak bisa fix. Data diputar di peta seperti siaran langsung, lengkap dengan grafik getaran, penanda guncangan, dan ringkasan.</p>
+  <fieldset>
+    <legend>Dari file</legend>
+    <input type="file" id="rpFiles" multiple accept=".zip,.csv,.pos,.txt">
+    <ul class="small muted tight">
+      <li><b>.zip</b> hasil "Unduh semua" dari web app (berisi posisi + IMU 5 Hz)</li>
+      <li><b>F####_pos.csv</b> dari kartu SD, boleh bersama <b>F####_imu.csv</b> (getaran dihitung dari IMU 200 Hz)</li>
+      <li><b>_web_posisi.csv</b>, atau <b>.pos RTKLIB</b> (hasil PPK, format lat/lon derajat)</li>
+      <li>.zip berisi file-file di atas (terkompresi atau tidak)</li>
+    </ul>
+  </fieldset>
+  <fieldset>
+    <legend>Dari rekaman di browser ini</legend>
+    <div id="rpSessList" class="small"></div>
+  </fieldset>
+  <div class="row-end"><button id="btnCloseReplay">Tutup</button></div>
 </dialog>
 
 <div id="toast"></div>

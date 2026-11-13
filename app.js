@@ -5,7 +5,7 @@
 
 // ------------------------------------------------------------------ konfigurasi
 const DEF = { mode: 'cloud', cloudUrl: 'wss://mqtt.flespi.io:443', cloudUser: '', cloudPass: '', remember: false, autoZip: true,
-  localUrl: '', prefix: 'fobos', vibTh: '0.5,1,2' };
+  localUrl: '', prefix: 'fobos', vibTh: '0.5,1,2', shockTh: '2', segLen: '20', refAcc: '3.3' };
 function loadCfg() {
   let c = {};
   try { c = JSON.parse(localStorage.getItem('fobos.cfg') || '{}'); } catch (e) { c = {}; }
@@ -99,11 +99,12 @@ const Store = {
 };
 
 // ------------------------------------------------------------------ peta
-const map = L.map('map', { preferCanvas: true, zoomControl: true }).setView([-2.5, 118], 5);
+const map = L.map('map', { preferCanvas: true, zoomControl: false, maxZoom: 22 }).setView([-2.5, 118], 5);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  maxZoom: 22, maxNativeZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 }).addTo(map);
-L.control.scale({ imperial: false }).addTo(map);
+L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
 
 const Q_INFO = { 4: ['RTK fix', '#1a9850'], 3: ['RTK float', '#f39c12'], 2: ['DGNSS', '#2c7fb8'], 1: ['Single', '#d73027'], 0: ['Tanpa fix', '#9e9e9e'] };
 const V_COLORS = ['#1a9850', '#d9c800', '#f39c12', '#d73027'];
@@ -113,10 +114,32 @@ function vibTh() { return CFG.vibTh.split(',').map(Number).filter((x) => !isNaN(
 function vibClass(v) { if (v === null || v === undefined || isNaN(v)) return -1; const th = vibTh(); let i = 0; while (i < th.length && v >= th[i]) i++; return Math.min(i, V_COLORS.length - 1); }
 function segColor(cls) { return colorMode === 'q' ? Q_INFO[cls][1] : (cls < 0 ? '#9e9e9e' : V_COLORS[cls]); }
 function ptClass(p) { return colorMode === 'q' ? p.q : vibClass(p.vib); }
+function num(x) { if (x === '' || x === null || x === undefined) return null; const v = Number(x); return isFinite(v) ? v : null; }
+function cfgNum(k, def) { const v = parseFloat(String(CFG[k]).replace(',', '.')); return isFinite(v) && v > 0 ? v : def; }
+const GPS_EPOCH_MS = Date.UTC(1980, 0, 6);
+const LEAP_S = 18;                       // GPS - UTC (detik), berlaku sejak 2017
+function devTime(p) {                    // waktu perangkat (ms GPS) dari minggu + TOW
+  if (p.wk && p.tow !== undefined && p.tow !== null) return p.wk * 604800000 + p.tow;
+  return p.tow ?? Date.now();
+}
+function clockLabel(t) {                 // ms GPS -> jam lokal browser
+  if (t > 1e11) return new Date(GPS_EPOCH_MS + t - LEAP_S * 1000).toLocaleTimeString('id-ID', { hour12: false });
+  return new Date().toLocaleTimeString('id-ID', { hour12: false });
+}
+function haversine(a, b) {
+  const R = 6371008.8, r = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function fmtAcc(m) { if (m === null || m === undefined || !isFinite(m)) return '–'; return m < 1 ? (m * 100).toFixed(m < 0.1 ? 1 : 0) + ' cm' : m.toFixed(2) + ' m'; }
+function fmtDist(m) { return m < 1000 ? m.toFixed(0) + ' m' : (m / 1000).toFixed(2) + ' km'; }
+function newStats() { return { n: 0, nFix: 0, dist: 0, t0: null, t1: null, spdMax: 0, vibSum: 0, vibN: 0, vibMax: 0 }; }
 function renderLegend() {
   let h = '';
   if (colorMode === 'q') for (const q of [4, 3, 2, 1, 0]) h += `<div class="lg"><i style="background:${Q_INFO[q][1]}"></i>${Q_INFO[q][0]}</div>`;
   else {
+    if (colorMode === 's') h += `<div class="small muted" style="margin-bottom:3px">rata-rata getaran per ${cfgNum('segLen', 20)} m lintasan</div>`;
     const th = vibTh(); const lab = ['< ' + th[0]]; for (let i = 0; i < th.length - 1; i++) lab.push(`${th[i]}–${th[i + 1]}`); lab.push('≥ ' + th[th.length - 1]);
     lab.forEach((l, i) => { h += `<div class="lg"><i style="background:${V_COLORS[Math.min(i, 3)]}"></i>${l} m/s²</div>`; });
     h += '<div class="lg"><i style="background:#9e9e9e"></i>tanpa data</div>';
@@ -126,28 +149,56 @@ function renderLegend() {
 document.querySelectorAll('#legend .seg button').forEach((b) => b.onclick = () => {
   colorMode = b.dataset.mode; document.querySelectorAll('#legend .seg button').forEach((x) => x.classList.toggle('on', x === b));
   renderLegend(); for (const d of devices.values()) redrawTrack(d);
+  saveUi();
 });
 
 // ------------------------------------------------------------------ perangkat
 const devices = new Map();
 let selected = null;
-function dev(id) {
+function dev(id, opt) {
   let d = devices.get(id);
   if (d) return d;
   const color = DEV_COLORS[devices.size % DEV_COLORS.length];
   d = { id, color, pts: [], segs: [], cur: null, marker: null, status: null, last: null, lastRx: 0, vib: [],
-        sess: '', rec: null, pvtBuf: [], imuBuf: [], imu: null, imuRx: 0 };
+        sess: '', rec: null, pvtBuf: [], imuBuf: [], imu: null, imuRx: 0,
+        shocks: [], st: newStats(), sg: null, lastShockT: -1e15, vibSec: null, replay: !!(opt && opt.replay) };
   d.layer = L.layerGroup().addTo(map);
+  d.shockLayer = L.layerGroup().addTo(map);
   devices.set(id, d);
-  if (!selected) selected = id;
+  if (!selected || (opt && opt.select)) selected = id;
   renderDevices();
   return d;
 }
+function updStats(d, p, prev, gap) {
+  const st = d.st; const t = p._t;
+  st.n++; if (p.q === 4) st.nFix++;
+  if (st.t0 === null) st.t0 = t; st.t1 = t;
+  if (prev && !gap && prev.q > 0) { const dd = haversine(prev, p); if (dd < 200) st.dist += dd; }
+  if (p.spd != null && p.spd > st.spdMax && p.spd < 70) st.spdMax = p.spd;
+  if (p.vib != null) { st.vibSum += p.vib; st.vibN++; if (p.vib > st.vibMax) st.vibMax = p.vib; }
+}
+// mode "Segmen": lintasan dipotong tiap N meter; warna = rata-rata indeks getaran titik-titik di dalamnya
+function segAdd(d, p, prev, gap) {
+  const L0 = cfgNum('segLen', 20);
+  if (!d.sg || gap) d.sg = { pts: [[p.lat, p.lon]], len: 0, sum: 0, n: 0, fix: 0, cnt: 0, pl: null };
+  else { d.sg.pts.push([p.lat, p.lon]); d.sg.len += haversine(prev, p); }
+  const g = d.sg; g.cnt++; if (p.q === 4) g.fix++;
+  if (p.vib != null) { g.sum += p.vib; g.n++; }
+  const mean = g.n ? g.sum / g.n : null; const cls = vibClass(mean);
+  const col = cls < 0 ? '#9e9e9e' : V_COLORS[cls];
+  const tip = `Segmen ${g.len.toFixed(0)} m · getaran rata-rata ${mean === null ? '–' : mean.toFixed(2) + ' m/s²'} · RTK fix ${Math.round(100 * g.fix / g.cnt)}%`;
+  if (!g.pl) { g.pl = L.polyline(g.pts, { color: col, weight: 9, opacity: 0.92, lineCap: 'butt' }).addTo(d.layer); g.pl.bindTooltip(tip, { sticky: true }); d.segs.push(g.pl); }
+  else { g.pl.setLatLngs(g.pts); g.pl.setStyle({ color: col }); g.pl.setTooltipContent(tip); }
+  if (g.len >= L0) d.sg = { pts: [[p.lat, p.lon]], len: 0, sum: 0, n: 0, fix: 0, cnt: 0, pl: null };
+}
 function addPoint(d, p) {
+  if (p._t === undefined) p._t = devTime(p);
   d.pts.push(p);
-  const cls = ptClass(p);
   const prev = d.pts.length > 1 ? d.pts[d.pts.length - 2] : null;
-  const gap = prev && (Math.abs(p.tow - prev.tow) > 5000);
+  const gap = !prev || (Math.abs(p._t - prev._t) > 5000);
+  updStats(d, p, prev, gap);
+  if (colorMode === 's') { segAdd(d, p, prev, gap); return; }
+  const cls = ptClass(p);
   if (!d.cur || d.cur.cls !== cls || gap) {
     const ll = (prev && !gap) ? [[prev.lat, prev.lon], [p.lat, p.lon]] : [[p.lat, p.lon]];
     const pl = L.polyline(ll, { color: segColor(cls), weight: 5, opacity: 0.9 }).addTo(d.layer);
@@ -155,19 +206,80 @@ function addPoint(d, p) {
   } else d.cur.pl.addLatLng([p.lat, p.lon]);
 }
 function redrawTrack(d) {
-  d.layer.clearLayers(); d.segs = []; d.cur = null; d.marker = null;
+  d.layer.clearLayers(); d.segs = []; d.cur = null; d.marker = null; d.sg = null; d.st = newStats();
   const pts = d.pts; d.pts = [];
   for (const p of pts) addPoint(d, p);
   if (d.last) placeMarker(d, d.last);
+  drawShocks(d);
 }
 function placeMarker(d, p) {
   if (!d.marker) {
-    d.marker = L.circleMarker([p.lat, p.lon], { radius: 8, color: '#fff', weight: 2, fillColor: d.color, fillOpacity: 1 }).addTo(d.layer);
+    d.marker = L.circleMarker([p.lat, p.lon], { radius: markerR(), color: '#fff', weight: 2, fillColor: d.color, fillOpacity: 1 }).addTo(d.layer);
     d.marker.bindTooltip(d.id, { permanent: true, direction: 'top', offset: [0, -8] });
-    d.marker.on('click', () => { selected = d.id; renderDevices(); drawVib(); });
+    d.marker.on('click', () => selectDevice(d.id));
   } else d.marker.setLatLng([p.lat, p.lon]);
+  if (d.id === selected) updAccCircles(d, p);
 }
-function clearTrack(id) { const d = devices.get(id); if (!d) return; d.pts = []; d.layer.clearLayers(); d.segs = []; d.cur = null; d.marker = null; if (d.last) placeMarker(d, d.last); }
+function clearTrack(id) {
+  const d = devices.get(id); if (!d) return;
+  d.pts = []; d.layer.clearLayers(); d.segs = []; d.cur = null; d.marker = null; d.sg = null; d.st = newStats();
+  d.shocks = []; d.shockLayer.clearLayers();
+  if (d.last && d.last.q > 0) placeMarker(d, d.last);
+  scheduleRender();
+}
+function removeDevice(id) {
+  const d = devices.get(id); if (!d) return;
+  map.removeLayer(d.layer); map.removeLayer(d.shockLayer); devices.delete(id);
+  if (selected === id) { selected = devices.size ? devices.keys().next().value : null; accLayer.clearLayers(); }
+  renderDevices(); drawVib();
+}
+
+// ------------------------------------------------------------------ lingkaran ketelitian (C)
+// Dua lingkaran di sekitar perangkat terpilih: rujukan GNSS standar (bawaan 3,3 m) dan perkiraan akurasi horizontal penerima saat ini.
+const accLayer = L.layerGroup().addTo(map);
+let accRef = null, accNow = null;
+function updAccCircles(d, p) {
+  if (!$('#chkAcc').checked || !p || !(p.q > 0) || map.getZoom() < 19) { accLayer.clearLayers(); accRef = accNow = null; return; }
+  const ref = cfgNum('refAcc', 3.3);
+  const acc = p.hacc != null ? Math.max(p.hacc, 0.005) : null;
+  const ll = [p.lat, p.lon];
+  if (!accRef) {
+    accRef = L.circle(ll, { radius: ref, color: '#d73027', weight: 2, dashArray: '6 5', fill: false, interactive: false }).addTo(accLayer);
+    accRef.bindTooltip(`GNSS standar ±${String(ref).replace('.', ',')} m`, { permanent: true, direction: 'right', className: 'acc-label', offset: [0, 0] });
+  } else { accRef.setLatLng(ll); accRef.setRadius(ref); }
+  if (acc !== null) {
+    const col = p.q === 4 ? '#1a9850' : p.q === 3 ? '#f39c12' : '#2c7fb8';
+    if (!accNow) accNow = L.circle(ll, { radius: acc, color: col, weight: 2, fillColor: col, fillOpacity: 0.35, interactive: false }).addTo(accLayer);
+    else { accNow.setLatLng(ll); accNow.setRadius(acc); accNow.setStyle({ color: col, fillColor: col }); }
+  }
+  // label lingkaran rujukan menempel di tepi kanannya
+  const tt = accRef.getTooltip(); if (tt) tt.setLatLng(L.latLng(p.lat, p.lon + ref / (111320 * Math.cos(p.lat * Math.PI / 180))));
+}
+function markerR() { return map.getZoom() >= 20 ? 5 : 8; }
+map.on('zoomend', () => {
+  for (const x of devices.values()) if (x.marker) x.marker.setRadius(markerR());
+  const d = devices.get(selected); updAccCircles(d, d && d.last);
+});
+
+// ------------------------------------------------------------------ penanda guncangan (D)
+function shockIcon(fresh) { return L.divIcon({ className: 'shock' + (fresh ? ' new' : ''), html: '<b></b><i></i>', iconSize: [18, 18], iconAnchor: [9, 9] }); }
+function shockMarker(d, s, fresh) {
+  if (!$('#chkShock').checked) return;
+  const m = L.marker([s.lat, s.lon], { icon: shockIcon(fresh), keyboard: false }).addTo(d.shockLayer);
+  m.bindPopup(`<b>Guncangan ${s.v.toFixed(2)} m/s²</b><br>${esc(d.id)} · ${esc(s.clock)}<br>posisi ${esc(qName(s.q))}${s.hacc != null ? ' ±' + fmtAcc(s.hacc) : ''}`);
+  if (fresh) setTimeout(() => m.setIcon(shockIcon(false)), 6000);
+}
+function drawShocks(d) { d.shockLayer.clearLayers(); for (const s of d.shocks) shockMarker(d, s, false); }
+// dipanggil sekali per detik indeks getaran baru
+function evalShock(d, v, t) {
+  if (v === null || v === undefined || !(v >= cfgNum('shockTh', 2))) return;
+  const p = d.last; if (!p || !(p.q > 0)) return;
+  if (t - d.lastShockT < 3000) return;            // satu penanda per guncangan (jeda min. 3 s)
+  d.lastShockT = t;
+  const s = { lat: p.lat, lon: p.lon, v, q: p.q, hacc: p.hacc, t, clock: clockLabel(p._t ?? devTime(p)) };
+  d.shocks.push(s); shockMarker(d, s, true);
+  if (!RP.quiet && (document.body.classList.contains('expo') || d.id === selected)) toast(`⚡ ${d.id}: guncangan ${v.toFixed(2)} m/s² terdeteksi`, 2500);
+}
 
 // ------------------------------------------------------------------ MQTT
 let client = null;
@@ -218,30 +330,38 @@ function onMessage(t, msg) {
   } catch (e) { console.warn('pesan tidak terbaca', t, e); }
 }
 
-function pushVib(d, v) {
+function pushVib(d, v, t) {
   if (v === null || v === undefined) return;
-  d.vib.push({ t: Date.now(), v }); if (d.vib.length > 1200) d.vib.shift();
+  d.vib.push({ t: t ?? Date.now(), v }); if (d.vib.length > 1200) d.vib.shift();
+}
+function followTo(d, p) {
+  if (selected !== d.id || !$('#chkFollow').checked) return;
+  if (!d._zoomed) { map.setView([p.lat, p.lon], 18); d._zoomed = true; }
+  else if (!map.getBounds().pad(-0.2).contains([p.lat, p.lon])) map.panTo([p.lat, p.lon], { animate: !d.replay });
 }
 function onPvt(id, p) {
   const d = dev(id);
+  if (d.replay) return;                     // nama perangkat bentrok dengan putar ulang
+  p._t = devTime(p);
+  if (p.vib == null && d.imu && Date.now() - d.imuRx < 2500) p.vib = d.imu.vib;   // indeks getaran dari pesan IMU
   d.last = p; d.lastRx = Date.now();
   if (p.sess !== undefined) syncSession(d, p.sess);
   if (p.q > 0 && isFinite(p.lat) && isFinite(p.lon) && !(p.lat === 0 && p.lon === 0)) {
-    addPoint(d, p); placeMarker(d, p);
-    if (selected === id && $('#chkFollow').checked) {
-      if (!d._zoomed) { map.setView([p.lat, p.lon], 18); d._zoomed = true; } else if (!map.getBounds().pad(-0.2).contains([p.lat, p.lon])) map.panTo([p.lat, p.lon]);
-    }
+    addPoint(d, p); placeMarker(d, p); followTo(d, p);
   }
-  // grafik getaran dari PVT hanya bila pesan IMU tidak datang
-  if (Date.now() - (d.imuRx || 0) > 3000 && p.tow % 1000 < 100) pushVib(d, p.vib);
+  // grafik getaran & guncangan dari PVT hanya bila pesan IMU tidak datang
+  const sec = Math.floor(p.tow / 1000);
+  if (Date.now() - (d.imuRx || 0) > 3000 && sec !== d.vibSec) { d.vibSec = sec; pushVib(d, p.vib); evalShock(d, p.vib, p._t); }
   if (d.rec) { d.pvtBuf.push(p); d.rec.n.pvt++; d.rec.seq.pvt.push(p.seq); }
   scheduleRender();
 }
 // ringkasan IMU 5 Hz: rata-rata 200 ms + indeks getaran per detik
 function onImu(id, m) {
   const d = dev(id);
+  if (d.replay) return;
   d.imu = m; d.imuRx = Date.now(); d.lastRx = Date.now();
   pushVib(d, m.vib);
+  const sec = Math.floor(m.tow); if (sec !== d.vibSec) { d.vibSec = sec; evalShock(d, m.vib, (m.wk || 0) * 604800000 + m.tow * 1000); }
   if (d.rec) { d.imuBuf.push(m); d.rec.n.imu++; d.rec.seq.imu.push(m.seq); }
 }
 function onStatus(id, s) {
@@ -478,15 +598,31 @@ function exportTrack(id, fmt) {
 }
 
 // ------------------------------------------------------------------ tampilan perangkat
+const EMPTY_LIST = $('#devList').innerHTML;
 let renderPending = false;
 function scheduleRender() { if (!renderPending) { renderPending = true; requestAnimationFrame(() => { renderPending = false; renderDevices(); }); } }
 function renderDevices() {
-  const list = $('#devList'); $('#devCount').textContent = devices.size;
+  const list = $('#devList'); $('#devCount').textContent = devices.size; $('#devCount2').textContent = devices.size;
+  renderSheetSum(); renderSummary(); renderHud();
   if (document.activeElement && document.activeElement.tagName === 'SELECT' && list.contains(document.activeElement)) return;   // jangan ganggu pilihan yang sedang dibuka
-  if (!devices.size) return;
+  if (!devices.size) { list.innerHTML = EMPTY_LIST; return; }
   const now = Date.now(); let h = '';
   for (const d of devices.values()) {
     const p = d.last || {}; const s = d.status || {};
+    if (d.replay) {
+      h += `<div class="card ${selected === d.id ? 'sel' : ''}" data-id="${esc(d.id)}">
+        <h4><span><i class="dot" style="background:${d.color}"></i>${esc(d.id)}</span><span class="badge rp">putar ulang</span></h4>
+        <div class="kv">
+          <span>Sumber</span><span>${esc(d.src || '')}</span>
+          <span>Posisi</span><span class="q${p.q ?? 0}">${qName(p.q ?? 0)}</span>
+          <span>Satelit / akurasi</span><span>${p.sv ?? '–'} · ±${fmtAcc(p.hacc)}</span>
+          <span>Kecepatan</span><span>${p.spd != null ? (p.spd * 3.6).toFixed(1) + ' km/j' : '–'}</span>
+          <span>Getaran</span><span>${p.vib != null ? p.vib.toFixed(2) + ' m/s²' : '–'}</span>
+          <span>Waktu</span><span>${p._t ? esc(clockLabel(p._t)) : '–'}</span>
+        </div>
+        <div class="actions"><button data-act="zoom">Ke perangkat</button><button data-act="rpclose" class="danger">Tutup putar ulang</button></div></div>`;
+      continue;
+    }
     const online = s.online !== false && (now - Math.max(d.lastRx, d.statusRx || 0) < 6000);
     const q = p.q ?? 0; const nt = s.ntrip || {}; const imu = s.imu || {}; const sd = s.sd || {}; const tm = s.time || {};
     const sessOn = !!(s.sess || d.sess);
@@ -521,12 +657,13 @@ function renderDevices() {
 $('#devList').addEventListener('click', (e) => {
   const card = e.target.closest('.card'); if (!card) return;
   const id = card.dataset.id; const act = e.target.dataset.act;
-  if (!act) { selected = id; renderDevices(); drawVib(); return; }
+  if (!act) { selectDevice(id); return; }
   if (act === 'start') startSession(id);
   else if (act === 'stop') stopSession(id);
   else if (act === 'csv' || act === 'geojson') exportTrack(id, act);
-  else if (act === 'zoom') { const d = devices.get(id); if (d && d.last) map.setView([d.last.lat, d.last.lon], 18); selected = id; renderDevices(); }
+  else if (act === 'zoom') { const d = devices.get(id); if (d && d.last) map.setView([d.last.lat, d.last.lon], 18); selectDevice(id); if (isPhone()) setSheet('min'); }
   else if (act === 'clear') clearTrack(id);
+  else if (act === 'rpclose') replayStop();
 });
 $('#devList').addEventListener('change', (e) => {
   if (e.target.dataset.act !== 'rate') return;
@@ -536,17 +673,31 @@ $('#devList').addEventListener('change', (e) => {
 setInterval(scheduleRender, 1000);
 
 // ------------------------------------------------------------------ grafik getaran
+function selectDevice(id) {
+  selected = id; accLayer.clearLayers(); accRef = accNow = null;
+  const d = devices.get(id); if (d && d.last) updAccCircles(d, d.last);
+  renderDevices(); drawVib();
+}
 function drawVib() {
-  const cv = $('#vibCanvas'); const ctx = cv.getContext('2d'); const W = cv.width, H = cv.height;
-  ctx.clearRect(0, 0, W, H);
-  const d = devices.get(selected); $('#vibTitle').textContent = 'Indeks getaran' + (d ? ' — ' + d.id : '');
-  if (!d) return;
-  const now = Date.now(), span = 120000; const pts = d.vib.filter((x) => now - x.t <= span);
-  const vmax = Math.max(vibTh().at(-1) * 1.25 || 2.5, ...pts.map((x) => x.v));
-  ctx.strokeStyle = '#ccc'; ctx.fillStyle = '#888'; ctx.font = '10px sans-serif'; ctx.lineWidth = 1;
+  const d0 = devices.get(selected); $('#vibTitle').textContent = 'Indeks getaran' + (d0 ? ' — ' + d0.id : '');
+  const cv = $('#vibCanvas'); if (!cv.offsetParent) return;           // panel tertutup
+  const dpr = window.devicePixelRatio || 1;
+  const cw = Math.max(200, cv.clientWidth), ch = Math.max(60, cv.clientHeight);
+  if (cv.width !== Math.round(cw * dpr) || cv.height !== Math.round(ch * dpr)) { cv.width = Math.round(cw * dpr); cv.height = Math.round(ch * dpr); }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const W = cw, H = ch; ctx.clearRect(0, 0, W, H);
+  const d = d0; if (!d) return;
+  const dark = document.body.classList.contains('expo');
+  const now = d.replay ? RP.cur : Date.now(), span = 120000; const pts = d.vib.filter((x) => now - x.t <= span && x.t <= now);
+  const vmax = Math.max(vibTh().at(-1) * 1.25 || 2.5, cfgNum('shockTh', 2) * 1.1, ...pts.map((x) => x.v));
+  ctx.strokeStyle = dark ? '#3a4b5e' : '#ccc'; ctx.fillStyle = dark ? '#9fb0c2' : '#888'; ctx.font = '11px sans-serif'; ctx.lineWidth = 1;
   for (const th of vibTh()) { const y = H - 14 - (th / vmax) * (H - 20); ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(28, y); ctx.lineTo(W, y); ctx.stroke(); ctx.fillText(th.toFixed(1), 2, y + 3); }
-  ctx.setLineDash([]); ctx.fillText('-120 s', 28, H - 2); ctx.fillText('sekarang', W - 44, H - 2);
+  const ys = H - 14 - (cfgNum('shockTh', 2) / vmax) * (H - 20);
+  ctx.strokeStyle = '#d73027'; ctx.setLineDash([6, 3]); ctx.beginPath(); ctx.moveTo(28, ys); ctx.lineTo(W, ys); ctx.stroke();
+  ctx.setLineDash([]); ctx.fillStyle = dark ? '#9fb0c2' : '#888';
+  ctx.fillText('-120 s', 28, H - 2); ctx.fillText(d.replay ? 'waktu putar' : 'sekarang', W - 62, H - 2);
   for (let i = 1; i < pts.length; i++) {
+    if (pts[i].t - pts[i - 1].t > 5000) continue;
     const x0 = 28 + (W - 30) * (1 - (now - pts[i - 1].t) / span), x1 = 28 + (W - 30) * (1 - (now - pts[i].t) / span);
     const y0 = H - 14 - (pts[i - 1].v / vmax) * (H - 20), y1 = H - 14 - (pts[i].v / vmax) * (H - 20);
     ctx.strokeStyle = V_COLORS[Math.max(0, vibClass(pts[i].v))]; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
@@ -570,6 +721,7 @@ async function renderSessions() {
       ${c.imuMiss.length || c.rawMiss.length || c.pvtMiss.length ? `<div class="small" style="color:#c62828">Data hilang di jalur web (lengkap di SD): posisi ${c.pvtMiss.length}, IMU ${c.imuMiss.length}, UBX ${c.rawMiss.length}</div>` : ''}
       <div class="actions">
         <button data-x="zip" class="primary">Unduh semua (.zip)</button>
+        <button data-x="play">▶ Putar ulang</button>
         <button data-x="csv">Posisi .csv</button><button data-x="imucsv">IMU .csv</button><button data-x="ubx">UBX .ubx</button>
         <button data-x="geojson">GeoJSON</button><button data-x="report">Laporan</button>
         <button data-x="del" class="danger">Hapus</button>
@@ -580,9 +732,10 @@ async function renderSessions() {
 $('#sessList').addEventListener('click', async (e) => {
   const x = e.target.dataset.x; if (!x) return; const sess = e.target.closest('.sess').dataset.sess;
   if (x === 'del') { if (!window.confirm(`Hapus sesi ${sess} dari browser ini? (data di kartu SD tidak terhapus)`)) return; await Store.deleteSession(sess); renderSessions(); return; }
+  if (x === 'play') { $('#dlgSessions').close(); replayFromSession(sess); return; }
   exportSession(sess, x);
 });
-$('#btnSessions').onclick = async () => { for (const d of devices.values()) await flushRec(d); await renderSessions(); $('#dlgSessions').showModal(); };
+async function openSessions() { for (const d of devices.values()) await flushRec(d); await renderSessions(); $('#dlgSessions').showModal(); }
 $('#btnCloseSess').onclick = () => $('#dlgSessions').close();
 
 // ------------------------------------------------------------------ dialog pengaturan
@@ -599,17 +752,364 @@ $('#dlgSettings').addEventListener('close', () => {
   sessionPass = c.cloudPass; sessionUser = c.cloudUser; CFG = c; saveCfg(c); renderLegend(); for (const d of devices.values()) redrawTrack(d);
   toast('Pengaturan disimpan. Klik Sambungkan (atau Putuskan lalu Sambungkan).');
 });
-$('#btnSettings').onclick = openSettings;
 $('#btnConnect').onclick = connect;
 
 window.addEventListener('beforeunload', (e) => {
   if ([...devices.values()].some((d) => d.rec)) { e.preventDefault(); e.returnValue = 'Sesi sedang direkam di browser ini.'; }
 });
 
+
+// ------------------------------------------------------------------ ringkasan (F), lembar bawah, HUD
+function sumOf(d) {
+  const st = d.st; const dur = st.t0 !== null ? (st.t1 - st.t0) / 1000 : 0;
+  return { dist: fmtDist(st.dist), dur: fmtDur(dur), fix: st.n ? Math.round(100 * st.nFix / st.n) + '%' : '–',
+    spd: st.spdMax ? (st.spdMax * 3.6).toFixed(0) + ' km/j' : '–', vib: st.vibN ? (st.vibSum / st.vibN).toFixed(2) + ' m/s²' : '–', shock: String(d.shocks.length) };
+}
+function renderSummary() {
+  const d = devices.get(selected); $('#sumWho').textContent = d ? d.id : '';
+  if (!d || !d.st.n) { $('#sumBody').innerHTML = '<span class="muted small">Belum ada jejak.</span>'; return; }
+  const m = sumOf(d);
+  $('#sumBody').innerHTML = [['Jarak', m.dist], ['Durasi', m.dur], ['RTK fix', m.fix], ['Kec. maks', m.spd], ['Getaran rata²', m.vib], ['Guncangan', m.shock]]
+    .map(([k, v]) => `<div><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('');
+}
+function renderSheetSum() {
+  const d = devices.get(selected); const el = $('#sheetSum');
+  if (!d) { el.textContent = ''; return; }
+  const p = d.last || {}; el.innerHTML = `${esc(d.id)} · <span class="q${p.q ?? 0}">${esc(qName(p.q ?? 0))}</span>${p.hacc != null ? ' ±' + esc(fmtAcc(p.hacc)) : ''}`;
+}
+function renderHud() {
+  if (!document.body.classList.contains('expo')) return;
+  const d = devices.get(selected);
+  if (!d) { $('#hudId').textContent = 'Menunggu perangkat…'; return; }
+  const p = d.last || {}; const q = p.q ?? 0;
+  $('#hudId').textContent = d.id;
+  const tag = $('#hudMode'); tag.textContent = d.replay ? 'PUTAR ULANG' : 'LANGSUNG'; tag.classList.toggle('rp', d.replay);
+  const hq = $('#hudQ'); hq.textContent = ({ 4: 'RTK FIX', 3: 'RTK FLOAT', 2: 'DGNSS', 1: 'SINGLE', 0: 'TANPA FIX' })[q]; hq.className = 'hud-q q' + q;
+  $('#hudAcc').textContent = q > 0 && p.hacc != null ? '±' + fmtAcc(p.hacc) : '–';
+  $('#hudSv').textContent = p.sv ?? '–';
+  $('#hudSpd').textContent = p.spd != null ? (p.spd * 3.6).toFixed(0) + ' km/j' : '–';
+  const v = d.replay ? p.vib : (d.imu && d.imu.vib != null ? d.imu.vib : p.vib);
+  $('#hudVib').textContent = v != null ? v.toFixed(2) + ' m/s²' : '–';
+  const ref = cfgNum('refAcc', 3.3);
+  $('#hudCmp').innerHTML = q > 0 && p.hacc != null && p.hacc > 0
+    ? `Garis putus merah = GNSS standar ±${String(ref).replace('.', ',')} m. Perkiraan akurasi penerima saat ini <b>±${esc(fmtAcc(p.hacc))}</b>, sekitar <b>${Math.round(ref / Math.max(p.hacc, 0.005))}×</b> lebih kecil.`
+    : 'Menunggu solusi posisi…';
+  const m = sumOf(d);
+  $('#hudSum').innerHTML = [['Jarak', m.dist], ['Durasi', m.dur], ['RTK fix', m.fix], ['Guncangan', m.shock]]
+    .map(([k, val]) => `<div><span class="hl">${k}</span><b>${esc(val)}</b></div>`).join('');
+}
+
+// ------------------------------------------------------------------ panel buka/tutup, lembar bawah, menu (rencana 1 & 2)
+const isPhone = () => window.matchMedia('(max-width:760px)').matches;
+let UI = {};
+try { UI = JSON.parse(localStorage.getItem('fobos.ui') || '{}'); } catch (e) { UI = {}; }
+function saveUi() {
+  UI.panels = UI.panels || {};
+  document.querySelectorAll('.panel[data-key]').forEach((p) => { UI.panels[(isPhone() ? 'm_' : 'd_') + p.dataset.key] = p.classList.contains('min'); });
+  UI.side = !$('#main').classList.contains('side-off'); UI.mode = colorMode;
+  UI.acc = $('#chkAcc').checked; UI.shock = $('#chkShock').checked; UI.follow = $('#chkFollow').checked;
+  try { localStorage.setItem('fobos.ui', JSON.stringify(UI)); } catch (e) { /* abaikan */ }
+}
+function applyPanels() {
+  const pre = isPhone() ? 'm_' : 'd_'; const P = UI.panels || {};
+  document.querySelectorAll('.panel[data-key]').forEach((p) => {
+    const k = pre + p.dataset.key; const min = k in P ? P[k] : isPhone();     // di ponsel: tertutup sejak awal
+    p.classList.toggle('min', min); p.querySelector('.tog').textContent = min ? '▸' : '▾';
+  });
+}
+document.querySelectorAll('.panel[data-key] .ph').forEach((h) => h.addEventListener('click', () => {
+  const p = h.parentElement; const min = !p.classList.contains('min');
+  if (!min && isPhone()) document.querySelectorAll('.panel[data-key]').forEach((o) => { if (o !== p) { o.classList.add('min'); o.querySelector('.tog').textContent = '▸'; } });
+  p.classList.toggle('min', min); h.querySelector('.tog').textContent = min ? '▸' : '▾';
+  saveUi(); drawVib();
+}));
+function setSide(open) {
+  $('#main').classList.toggle('side-off', !open); $('#btnSideOpen').hidden = open;
+  setTimeout(() => map.invalidateSize(), 50); saveUi();
+}
+$('#btnSide').onclick = (e) => { e.stopPropagation(); setSide(false); };
+$('#btnSideOpen').onclick = () => setSide(true);
+// lembar bawah ponsel: tertutup (1 baris) / setengah / penuh; ketuk atau geser pegangan
+const SHEET = ['min', 'half', 'full'];
+function setSheet(st) { $('#main').dataset.sheet = st; }
+(() => {
+  const h = $('#sideHead'); let y0 = null, t0 = 0;
+  h.addEventListener('pointerdown', (e) => { if (!isPhone() || e.target.closest('button')) return; y0 = e.clientY; t0 = Date.now(); h.setPointerCapture(e.pointerId); });
+  h.addEventListener('pointerup', (e) => {
+    if (y0 === null) return; const dy = e.clientY - y0; y0 = null;
+    const i = SHEET.indexOf($('#main').dataset.sheet || 'min');
+    if (Math.abs(dy) < 12 && Date.now() - t0 < 600) setSheet(i === 0 ? 'half' : 'min');
+    else if (dy < 0) setSheet(SHEET[Math.min(2, i + 1)]);
+    else setSheet(SHEET[Math.max(0, i - 1)]);
+  });
+  h.addEventListener('pointercancel', () => { y0 = null; });
+})();
+// menu ⋮ (ponsel) dan tombol header
+function go(what) {
+  $('#menuPop').hidden = true;
+  if (what === 'sessions') openSessions();
+  else if (what === 'replay') openReplay();
+  else if (what === 'expo') expoOn();
+  else if (what === 'settings') openSettings();
+}
+document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); go(b.dataset.go); }));
+$('#btnMenu').onclick = (e) => { e.stopPropagation(); $('#menuPop').hidden = !$('#menuPop').hidden; };
+document.addEventListener('click', (e) => { if (!$('#menuPop').hidden && !e.target.closest('#menuPop')) $('#menuPop').hidden = true; });
+$('#chkAcc').onchange = () => { const d = devices.get(selected); accLayer.clearLayers(); accRef = accNow = null; if (d) updAccCircles(d, d.last); saveUi(); };
+$('#chkShock').onchange = () => { for (const d of devices.values()) { if ($('#chkShock').checked) drawShocks(d); else d.shockLayer.clearLayers(); } saveUi(); };
+$('#chkFollow').onchange = saveUi;
+window.addEventListener('resize', () => { applyPanels(); drawVib(); });
+
+// ------------------------------------------------------------------ mode pameran (B)
+let wakeLock = null;
+async function expoOn() {
+  document.body.classList.add('expo');
+  if (!selected && devices.size) selected = devices.keys().next().value;
+  $('#vibPanel').classList.remove('min'); $('#vibPanel .tog').textContent = '▾';
+  try { if (document.documentElement.requestFullscreen && !document.fullscreenElement) await document.documentElement.requestFullscreen(); } catch (e) { /* layar penuh ditolak: tetap jalan */ }
+  try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { wakeLock = null; }
+  setTimeout(() => { map.invalidateSize(); const d = devices.get(selected); if (d && d.last && d.last.q > 0) map.setView([d.last.lat, d.last.lon], Math.max(map.getZoom(), 21)); }, 150);
+  renderHud(); drawVib();
+}
+function expoOff() {
+  document.body.classList.remove('expo');
+  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  applyPanels(); setTimeout(() => map.invalidateSize(), 150); drawVib();
+}
+$('#btnExpoExit').onclick = expoOff;
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && document.body.classList.contains('expo') && !document.fullscreenElement) expoOff(); });
+document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && document.body.classList.contains('expo')) expoOff(); });
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'visible' && document.body.classList.contains('expo') && navigator.wakeLock && !wakeLock) { try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* abaikan */ } }
+});
+
+// ------------------------------------------------------------------ putar ulang (A)
+const RP = { on: false, d: null, pts: [], idx: 0, t0: 0, t1: 0, cur: 0, playing: false, last: 0, ghost: null, quiet: false, lastVibDraw: 0 };
+const RTK_Q = { 1: 4, 2: 3, 3: 2, 4: 2, 5: 1, 6: 2 };          // RTKLIB Q -> kelas kualitas web
+const STATUS_Q = { FIX: 4, FLOAT: 3, DGNSS: 2, SINGLE: 1, TANPA_FIX: 0 };
+function splitLines(t) { return t.split(/\r?\n/); }
+function csvHeader(lines) { for (let i = 0; i < lines.length; i++) { const l = lines[i].trim(); if (l && !l.startsWith('#')) return { i, cols: l.split(',').map((c) => c.trim().toLowerCase()) }; } return null; }
+function posFromCsv(text) {
+  const lines = splitLines(text); const hd = csvHeader(lines); if (!hd) return [];
+  const ix = (n) => hd.cols.indexOf(n); const c = {};
+  for (const k of ['utc', 'gps_week', 'tow_s', 'lat', 'lon', 'h_msl', 'h_ell', 'q', 'status', 'num_sv', 'h_acc', 'v_acc', 'std_lat', 'std_lon', 'hdop', 'speed', 'heading', 'vib', 'seq']) c[k] = ix(k);
+  const out = [];
+  for (let i = hd.i + 1; i < lines.length; i++) {
+    const l = lines[i]; if (!l) continue; const f = l.split(',');
+    const lat = num(f[c.lat]), lon = num(f[c.lon]); if (lat === null || lon === null || (lat === 0 && lon === 0)) continue;
+    let q = c.q >= 0 ? num(f[c.q]) : null; if (q === null && c.status >= 0) q = STATUS_Q[(f[c.status] || '').trim()] ?? 1; if (q === null) q = 1;
+    const tw = c.tow_s >= 0 ? num(f[c.tow_s]) : null;
+    out.push({ lat, lon, q, h: num(f[c.h_msl]), hae: num(f[c.h_ell]), sv: num(f[c.num_sv]), hacc: num(f[c.h_acc]), vacc: num(f[c.v_acc]),
+      slat: num(f[c.std_lat]), slon: num(f[c.std_lon]), hdop: num(f[c.hdop]), spd: num(f[c.speed]), hdg: num(f[c.heading]),
+      vib: c.vib >= 0 ? num(f[c.vib]) : null, wk: num(f[c.gps_week]) || 0, tow: tw === null ? i * 100 : Math.round(tw * 1000), utc: c.utc >= 0 ? f[c.utc] : '' });
+  }
+  return out;
+}
+function vibFromImuCsv(text) {        // Map(detik GPS -> indeks getaran); 5 Hz web: kolom vib; 200 Hz SD: dihitung seperti firmware
+  const lines = splitLines(text); const hd = csvHeader(lines); const out = new Map(); if (!hd) return { map: out, kind: '' };
+  const ix = (n) => hd.cols.indexOf(n);
+  const iw = ix('gps_week'), it = ix('tow_s'), iv = ix('vib'), iax = ix('ax'), iay = ix('ay'), iaz = ix('az'), itf = ix('tflag');
+  if (it < 0) return { map: out, kind: '' };
+  if (iv >= 0) {
+    for (let i = hd.i + 1; i < lines.length; i++) { const f = lines[i].split(','); const v = num(f[iv]); const t = num(f[it]); if (v === null || t === null) continue;
+      const key = (num(f[iw]) || 0) * 604800 + Math.floor(t); if (!out.has(key)) out.set(key, v); }
+    return { map: out, kind: 'IMU 5 Hz' };
+  }
+  let key = null, acc = null, skipped = 0;
+  const fin = () => { if (acc && acc.n >= 10) { const r = vibRms(acc); if (r !== null) out.set(key, r); } };
+  for (let i = hd.i + 1; i < lines.length; i++) {
+    const f = lines[i].split(','); if (f.length < 4) continue;
+    if (itf >= 0 && Number(f[itf]) === 0) { skipped++; continue; }        // stempel waktu lokal: tidak bisa disandingkan dengan posisi
+    const t = num(f[it]); const ax = num(f[iax]), ay = num(f[iay]), az = num(f[iaz]); if (t === null || ax === null || ay === null || az === null) continue;
+    const k = (num(f[iw]) || 0) * 604800 + Math.floor(t);
+    if (k !== key) { fin(); key = k; acc = { s: [0, 0, 0], ss: [0, 0, 0, 0, 0, 0], n: 0 }; }
+    acc.s[0] += ax; acc.s[1] += ay; acc.s[2] += az; acc.ss[0] += ax * ax; acc.ss[1] += ay * ay; acc.ss[2] += az * az;
+    acc.ss[3] += ax * ay; acc.ss[4] += ax * az; acc.ss[5] += ay * az; acc.n++;
+  }
+  fin();
+  return { map: out, kind: 'IMU 200 Hz', skipped };
+}
+function vibRms(a) {                  // sama dengan VibAcc::rms() di firmware: simpangan baku percepatan searah gravitasi rata-rata
+  const n = a.n; const m = [a.s[0] / n, a.s[1] / n, a.s[2] / n]; const g = Math.hypot(m[0], m[1], m[2]); if (g < 1e-6) return null;
+  const u = [m[0] / g, m[1] / g, m[2] / g];
+  const cxx = a.ss[0] / n - m[0] * m[0], cyy = a.ss[1] / n - m[1] * m[1], czz = a.ss[2] / n - m[2] * m[2];
+  const cxy = a.ss[3] / n - m[0] * m[1], cxz = a.ss[4] / n - m[0] * m[2], cyz = a.ss[5] / n - m[1] * m[2];
+  const v = u[0] * u[0] * cxx + u[1] * u[1] * cyy + u[2] * u[2] * czz + 2 * (u[0] * u[1] * cxy + u[0] * u[2] * cxz + u[1] * u[2] * cyz);
+  return v > 0 ? Math.sqrt(v) : 0;
+}
+function posFromRtklib(text) {
+  const lines = splitLines(text); let utc = false, ok = false; const out = [];
+  for (const l of lines) {
+    if (l.startsWith('%')) { if (/latitude\(deg\)/i.test(l)) { ok = true; utc = /\bUTC\b/.test(l) && !/GPST/.test(l); } continue; }
+    if (!ok || !l.trim()) continue;
+    const s = l.trim().split(/\s+/); let wk, tow, o;
+    if (s[0].includes('/')) {
+      const [Y, M, D] = s[0].split('/').map(Number); const [hh, mm, ss] = s[1].split(':'); const sec = Number(ss);
+      let ms = Date.UTC(Y, M - 1, D, Number(hh), Number(mm), Math.floor(sec)) + Math.round((sec - Math.floor(sec)) * 1000);
+      if (utc) ms += LEAP_S * 1000;
+      const g = ms - GPS_EPOCH_MS; wk = Math.floor(g / 604800000); tow = g - wk * 604800000; o = 2;
+    } else { wk = Number(s[0]); tow = Math.round(Number(s[1]) * 1000); o = 2; }
+    const lat = num(s[o]), lon = num(s[o + 1]); if (lat === null || lon === null) continue;
+    const Q = Number(s[o + 3]); const sdn = num(s[o + 5]), sde = num(s[o + 6]);
+    out.push({ lat, lon, h: null, hae: num(s[o + 2]), q: RTK_Q[Q] ?? 1, sv: num(s[o + 4]), slat: sdn, slon: sde,
+      hacc: sdn !== null && sde !== null ? Math.hypot(sdn, sde) : null, spd: null, vib: null, wk, tow });
+  }
+  if (!ok) throw new Error('File .pos tidak berformat lat/lon derajat (atur RTKLIB: Solution Format = Lat/Lon/Height, derajat).');
+  for (let i = 1; i < out.length; i++) {         // kecepatan dari selisih posisi (RTKLIB .pos tidak menyimpannya)
+    const a = out[i - 1], b = out[i]; const dt = ((b.wk - a.wk) * 604800000 + b.tow - a.tow) / 1000;
+    if (dt > 0 && dt <= 2) b.spd = haversine(a, b) / dt;
+  }
+  return out;
+}
+async function unzip(buf) {          // ZIP "store" atau "deflate" (DecompressionStream bawaan browser)
+  const u8 = new Uint8Array(buf); const dv = new DataView(buf); let e = -1;
+  for (let i = u8.length - 22; i >= Math.max(0, u8.length - 65557); i--) if (dv.getUint32(i, true) === 0x06054b50) { e = i; break; }
+  if (e < 0) throw new Error('bukan file ZIP');
+  const n = dv.getUint16(e + 10, true); let p = dv.getUint32(e + 16, true); const out = []; const dec = new TextDecoder();
+  for (let k = 0; k < n; k++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const method = dv.getUint16(p + 10, true), csize = dv.getUint32(p + 20, true);
+    const nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lho = dv.getUint32(p + 42, true);
+    const name = dec.decode(u8.subarray(p + 46, p + 46 + nl)); p += 46 + nl + el + cl;
+    if (name.endsWith('/')) continue;
+    const start = lho + 30 + dv.getUint16(lho + 26, true) + dv.getUint16(lho + 28, true); const raw = u8.subarray(start, start + csize);
+    if (method === 0) out.push({ name, data: raw });
+    else if (method === 8 && 'DecompressionStream' in window) {
+      const ab = await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+      out.push({ name, data: new Uint8Array(ab) });
+    } else console.warn('metode kompresi ZIP tidak didukung', name, method);
+  }
+  return out;
+}
+async function replayFromFiles(fileList) {
+  const items = [];
+  for (const f of fileList) {
+    if (/\.zip$/i.test(f.name)) { for (const z of await unzip(await f.arrayBuffer())) items.push({ name: z.name.split('/').pop(), text: () => new TextDecoder().decode(z.data) }); }
+    else items.push({ name: f.name, text: () => f.text() });
+  }
+  let pos = null, imu = null;
+  for (const it of items) {
+    const nm = it.name.toLowerCase(); if (!/\.(csv|pos|txt)$/.test(nm)) continue;
+    const text = await it.text(); const head = text.slice(0, 4000);
+    if (/\.pos$/.test(nm) || /^%.*latitude\(deg\)/im.test(head)) { if (!pos || pos.kind !== 'rtklib') pos = { kind: 'rtklib', name: it.name, text }; continue; }
+    const hl = (csvHeader(splitLines(head)) || { cols: [] }).cols;
+    if (hl.includes('lat') && hl.includes('lon')) { if (!pos) pos = { kind: 'csv', name: it.name, text }; }
+    else if (hl.includes('ax') && hl.includes('az') && !imu) imu = { name: it.name, text };
+  }
+  if (!pos) { toast('Tidak ada file posisi (_pos.csv, _web_posisi.csv, atau .pos RTKLIB) di pilihan anda.', 6000); return; }
+  let pts; try { pts = pos.kind === 'rtklib' ? posFromRtklib(pos.text) : posFromCsv(pos.text); } catch (e) { toast(String(e.message || e), 7000); return; }
+  let src = pos.name;
+  if (imu) {
+    const v = vibFromImuCsv(imu.text); let hit = 0;
+    for (const p of pts) { const k = (p.wk || 0) * 604800 + Math.floor(p.tow / 1000); if (v.map.has(k)) { p.vib = v.map.get(k); hit++; } }
+    src += ` + ${imu.name} (${v.kind}${hit ? '' : ', waktu tidak cocok'})`;
+    if (!hit) toast('Waktu file IMU tidak cocok dengan file posisi: getaran tidak ditampilkan.', 6000);
+    else if (v.skipped) toast(`${v.skipped} baris IMU berstempel waktu lokal diabaikan.`, 5000);
+  }
+  const name = pos.name.replace(/\.(csv|pos|txt)$/i, '').replace(/_(web_posisi|pos)$/i, '');
+  replayStart(name, pts, src);
+}
+async function replayFromSession(sess) {
+  const f = await sessionFiles(sess);
+  const pts = f.pts.filter((p) => p.q > 0).map((p) => Object.assign({}, p));
+  if (!pts.length) { toast('Sesi ini tidak berisi titik posisi.'); return; }
+  replayStart(sess, pts, 'rekaman browser');
+}
+function replayStart(name, pts, src) {
+  if (RP.on) replayStop();
+  pts = pts.filter((p) => p.q > 0 && isFinite(p.lat) && isFinite(p.lon));
+  for (const p of pts) p._t = devTime(p);
+  pts.sort((a, b) => a._t - b._t);
+  if (pts.length < 2) { toast('Titik posisi terlalu sedikit untuk diputar ulang.'); return; }
+  $('#dlgReplay').open && $('#dlgReplay').close();
+  const id = '▶ ' + (name.length > 22 ? name.slice(0, 22) + '…' : name);
+  if (devices.has(id)) removeDevice(id);
+  const d = dev(id, { replay: true, select: true }); d.src = src;
+  Object.assign(RP, { on: true, d, pts, idx: 0, t0: pts[0]._t, t1: pts[pts.length - 1]._t, cur: pts[0]._t, playing: false });
+  RP.ghost = L.polyline(pts.map((p) => [p.lat, p.lon]), { color: '#7a8899', weight: 3, opacity: 0.5, dashArray: '4 6', interactive: false }).addTo(map);
+  $('#rpName').textContent = name; $('#playBar').hidden = false; document.body.classList.add('replaying');
+  map.setView([pts[0].lat, pts[0].lon], 18); d._zoomed = true;
+  selectDevice(id); replayUi(); replayPlay(true);
+  toast(`Putar ulang ${name}: ${pts.length} titik, ${fmtDur((RP.t1 - RP.t0) / 1000)}.`, 4000);
+}
+function replayFeed(d, p, live) {
+  d.last = p; d.lastRx = Date.now();
+  addPoint(d, p); placeMarker(d, p);
+  const sec = Math.floor(p._t / 1000);
+  if (sec !== d.vibSec) { d.vibSec = sec; pushVib(d, p.vib, p._t); RP.quiet = !live; evalShock(d, p.vib, p._t); RP.quiet = false; }
+  if (live) followTo(d, p);
+}
+function replayReset(d) {
+  d.pts = []; d.layer.clearLayers(); d.segs = []; d.cur = null; d.marker = null; d.sg = null; d.st = newStats();
+  d.shocks = []; d.shockLayer.clearLayers(); d.vib = []; d.vibSec = null; d.lastShockT = -1e15; d.last = null;
+}
+function replaySeek(t) {
+  const d = RP.d; if (!d) return;
+  RP.cur = Math.max(RP.t0, Math.min(RP.t1, t));
+  replayReset(d); RP.idx = 0;
+  while (RP.idx < RP.pts.length && RP.pts[RP.idx]._t <= RP.cur) replayFeed(d, RP.pts[RP.idx++], false);
+  if (d.last) { const p = d.last; if (!map.getBounds().pad(-0.2).contains([p.lat, p.lon])) map.panTo([p.lat, p.lon], { animate: false }); }
+  replayUi(); scheduleRender(); drawVib();
+}
+function replayPlay(on) {
+  if (on && RP.idx >= RP.pts.length) replaySeek(RP.t0);      // diputar dari awal lagi
+  RP.playing = on; $('#rpPlay').textContent = on ? '❚❚' : '▶';
+  if (on) { RP.last = performance.now(); requestAnimationFrame(replayTick); }
+}
+function replayTick(ts) {
+  if (!RP.on || !RP.playing) return;
+  const dt = Math.min(250, ts - RP.last); RP.last = ts;
+  RP.cur += dt * Number($('#rpSpeed').value);
+  const nx = RP.pts[RP.idx];
+  if (nx && $('#rpSkip').checked && nx._t - RP.cur > 3000) RP.cur = nx._t - 200;   // lewati jeda (kendaraan berhenti / data putus)
+  while (RP.idx < RP.pts.length && RP.pts[RP.idx]._t <= RP.cur) replayFeed(RP.d, RP.pts[RP.idx++], true);
+  if (RP.idx >= RP.pts.length) { RP.cur = RP.t1; replayPlay(false); toast('Putar ulang selesai.'); }
+  replayUi();
+  if (ts - RP.lastVibDraw > 250) { RP.lastVibDraw = ts; drawVib(); scheduleRender(); }
+  if (RP.playing) requestAnimationFrame(replayTick);
+}
+function replayUi() {
+  const tot = RP.t1 - RP.t0 || 1; const el = RP.cur - RP.t0;
+  if (document.activeElement !== $('#rpSlider')) $('#rpSlider').value = Math.round(1000 * el / tot);
+  $('#rpTime').textContent = `${fmtDur(el / 1000)} / ${fmtDur(tot / 1000)} · ${clockLabel(RP.cur)}`;
+}
+function replayStop() {
+  if (!RP.on) return;
+  RP.playing = false; RP.on = false;
+  if (RP.ghost) { map.removeLayer(RP.ghost); RP.ghost = null; }
+  const id = RP.d && RP.d.id; RP.d = null; RP.pts = [];
+  $('#playBar').hidden = true; document.body.classList.remove('replaying');
+  if (id) removeDevice(id);
+}
+$('#rpPlay').onclick = () => replayPlay(!RP.playing);
+$('#rpExit').onclick = replayStop;
+$('#rpSlider').addEventListener('input', () => { const tot = RP.t1 - RP.t0; replaySeek(RP.t0 + tot * Number($('#rpSlider').value) / 1000); });
+async function openReplay() {
+  const list = (await Store.sessions()).sort((a, b) => b.created - a.created);
+  $('#rpSessList').innerHTML = list.length
+    ? list.map((r) => `<div class="sess"><b>${esc(r.sess)}</b> <span class="muted">${esc(r.dev)} · ${new Date(r.created).toLocaleString()} · posisi ${(r.n && r.n.pvt) || 0}</span>
+        <div class="actions"><button data-play="${esc(r.sess)}" class="primary">▶ Putar</button></div></div>`).join('')
+    : '<span class="muted">Belum ada rekaman di browser ini.</span>';
+  $('#rpFiles').value = ''; $('#dlgReplay').showModal();
+}
+$('#rpSessList').addEventListener('click', (e) => { const s = e.target.dataset.play; if (s) { $('#dlgReplay').close(); replayFromSession(s); } });
+$('#rpFiles').addEventListener('change', async (e) => {
+  const files = [...e.target.files]; if (!files.length) return;
+  $('#dlgReplay').close(); toast('Membaca file…', 2000);
+  try { await replayFromFiles(files); } catch (err) { console.error(err); toast('Gagal membaca file: ' + (err.message || err), 7000); }
+});
+$('#btnCloseReplay').onclick = () => $('#dlgReplay').close();
+
 // ------------------------------------------------------------------ mulai
 (async () => {
   await Store.open();
-  renderLegend();
+  if (UI.mode && ['q', 'v', 's'].includes(UI.mode)) { colorMode = UI.mode; document.querySelectorAll('#legend .seg button').forEach((x) => x.classList.toggle('on', x.dataset.mode === colorMode)); }
+  if (UI.acc === false) $('#chkAcc').checked = false;
+  if (UI.shock === false) $('#chkShock').checked = false;
+  if (UI.follow === false) $('#chkFollow').checked = false;
+  applyPanels(); if (UI.side === false && !isPhone()) setSide(false);
+  renderLegend(); drawVib();
   if (!Store.ok) toast('Browser tidak mengizinkan IndexedDB: rekaman raw hanya di memori selama tab terbuka.', 7000);
   if ((CFG.mode === 'cloud' && CFG.cloudUrl && (CFG.cloudUser || CFG.cloudPass)) || (CFG.mode === 'local' && CFG.localUrl)) connect();
 })();
