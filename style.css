@@ -171,8 +171,66 @@ body.expo #playBar{background:rgba(16,26,37,.92);color:#e6edf3;border-color:#2b3
   body.expo .leaflet-control-scale,body.replaying .leaflet-control-scale{display:none}
   #btnExpoExit .lbl{display:none}
   body.expo #cTR{display:none}
+  .leaflet-control-attribution{font-size:9px;line-height:1.25}
+  body.expo .corner.bl{bottom:42px}
   body.expo #btnExpoExit{top:12px;right:12px;left:auto;transform:none;bottom:auto;opacity:.8;padding:4px 10px}
   body.expo #vibPanel .pb{width:calc(100vw - 40px)}
   body.expo #sidebar{display:none}
   body.expo main{--sheetH:0px}
+}
+
+/* ---- cuaca */
+#wxPanel{width:308px}
+#wxPanel[hidden]{display:none}
+.wx-brief{display:flex;align-items:center;gap:2px;font-weight:700;font-size:13px}
+.wx-brief .wx-ic{width:22px;height:22px}
+.wx-body{font-size:12px}
+.wx-main{display:flex;align-items:center;gap:8px}
+.wx-ic{width:64px;height:64px;flex:none;overflow:visible}
+.wx-big{display:flex;flex-direction:column;flex:1}
+.wx-big b{font-size:28px;line-height:1.05}
+.wx-big span{color:var(--muted)}
+.wx-wind{display:flex;flex-direction:column;align-items:center;font-size:11px;color:var(--muted)}
+.wx-wind b{font-size:16px;color:var(--fg);line-height:1}
+.wx-arrow{width:34px;height:34px;color:#1f5fbf;transition:transform .8s ease}
+.wx-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:2px 4px;margin:6px 0;border-top:1px solid var(--line);padding-top:6px}
+.wx-grid div{display:flex;flex-direction:column}
+.wx-grid .k{color:var(--muted);font-size:10px}
+.wx-grid .v{font-weight:700;font-size:12px}
+.wx-hourly{width:100%;height:auto;display:block}
+.wx-hourly .wx-t{font-size:9px;fill:#6b7380}
+.wx-hourly .wx-tv{font-size:10px;font-weight:700;fill:#c25a00}
+.wx-cap{font-size:10px;color:var(--muted);margin-top:2px}
+.wx-err{color:var(--bad);font-size:11px;margin:4px 0}
+.wx-radar{display:block;margin-top:6px}
+.wx-rbar{display:flex;align-items:center;gap:6px}
+.wx-rbar input{flex:1;min-width:0}
+.wx-bmkg{margin-top:8px;border-top:1px solid var(--line);padding-top:6px}
+.wx-brow{display:grid;grid-template-columns:42px 1fr 44px 38px;gap:4px;font-size:11px;padding:1px 0}
+.sumgrid .wide{grid-column:1/-1}
+/* animasi ikon */
+.wx-sun{transform-origin:30px 30px;animation:wxspin 18s linear infinite}
+.wx-cloud{animation:wxdrift 6s ease-in-out infinite alternate}
+.wx-drops line{animation:wxfall 1s linear infinite}
+.wx-drops line:nth-child(2){animation-delay:.33s}.wx-drops line:nth-child(3){animation-delay:.66s}
+.wx-bolt{animation:wxflash 2.4s steps(1) infinite}
+@keyframes wxspin{to{transform:rotate(360deg)}}
+@keyframes wxdrift{from{transform:translateX(-2px)}to{transform:translateX(3px)}}
+@keyframes wxfall{0%{transform:translateY(-4px);opacity:0}30%{opacity:1}100%{transform:translateY(7px);opacity:0}}
+@keyframes wxflash{0%,70%,100%{opacity:1}75%,85%{opacity:.15}80%,90%{opacity:1}}
+@media (prefers-reduced-motion:reduce){.wx-sun,.wx-cloud,.wx-drops line,.wx-bolt{animation:none}}
+/* HUD pameran */
+.hud-wx{border-top:1px solid #2b3d50;padding-top:10px;font-size:14px;color:#c9d6e2}
+.hud-wx:empty{display:none}
+.hud-wx .hl{font-size:12px;color:#9fb0c2;text-transform:uppercase;letter-spacing:1px;margin-right:6px}
+.hud-wx b{color:#fff}
+body.expo #wxPanel{background:rgba(15,23,35,.92);color:#e8eef5;border-color:#2b3d50}
+body.expo .wx-big span,body.expo .wx-grid .k,body.expo .wx-cap{color:#9fb0c2}
+body.expo .wx-grid .v,body.expo .wx-wind b{color:#fff}
+body.expo .wx-hourly .wx-t{fill:#9fb0c2}
+body.expo .wx-hourly .wx-tv{fill:#ffb366}
+@media (max-width:760px){
+  #wxPanel{width:min(308px,calc(100vw - 16px))}
+  .hud-wx{font-size:12px;padding-top:6px}
+  body.expo #hudWx{display:block}
 }

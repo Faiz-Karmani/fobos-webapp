@@ -65,6 +65,10 @@
           <label class="small"><input type="checkbox" id="chkShock" checked> penanda guncangan</label>
         </div>
       </div>
+      <div id="wxPanel" class="panel" data-key="wx">
+        <div class="ph"><b>Cuaca</b><span id="wxBrief" class="wx-brief"></span><button class="icon tog" aria-label="Tutup/buka">▾</button></div>
+        <div class="pb"><div id="wxBody" class="wx-body"><span class="muted small">Menunggu posisi dari perangkat…</span></div></div>
+      </div>
     </div>
 
     <div class="corner bl" id="cBL">
@@ -102,6 +106,7 @@
       </div>
       <div class="hud-cmp" id="hudCmp"></div>
       <div id="hudSum" class="hud-sum"></div>
+      <div id="hudWx" class="hud-wx"></div>
     </div>
     <button id="btnExpoExit" hidden>✕ <span class="lbl">Keluar mode pameran</span></button>
   </section>
@@ -137,6 +142,9 @@
         <select name="segLen"><option value="10">10 m</option><option value="20">20 m</option><option value="50">50 m</option><option value="100">100 m</option></select>
       </label>
       <label>Rujukan ketelitian GNSS standar (m) <input name="refAcc" value="3.3" inputmode="decimal"></label>
+      <label class="small"><input type="checkbox" name="wxOn" checked> tampilkan cuaca (Open-Meteo, butuh internet)</label>
+      <label>Kode wilayah BMKG (adm4, opsional) <input name="bmkgAdm4" placeholder="contoh: 34.04.04.2003" inputmode="text"></label>
+      <p class="small muted">Kode adm4 = kode kelurahan/desa Kemendagri (format xx.xx.xx.xxxx). Kosongkan bila tidak dipakai.</p>
     </fieldset>
     <label class="small"><input type="checkbox" name="autoZip" checked> unduh otomatis 1 file .zip (posisi, IMU, UBX) saat Stop Record</label>
     <div class="row-end">
@@ -178,5 +186,6 @@
 <script src="lib/leaflet.js"></script>
 <script src="lib/mqtt.min.js"></script>
 <script src="app.js"></script>
+<script src="weather.js"></script>
 </body>
 </html>

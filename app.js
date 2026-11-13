@@ -5,7 +5,7 @@
 
 // ------------------------------------------------------------------ konfigurasi
 const DEF = { mode: 'cloud', cloudUrl: 'wss://mqtt.flespi.io:443', cloudUser: '', cloudPass: '', remember: false, autoZip: true,
-  localUrl: '', prefix: 'fobos', vibTh: '0.5,1,2', shockTh: '2', segLen: '20', refAcc: '3.3' };
+  localUrl: '', prefix: 'fobos', vibTh: '0.5,1,2', shockTh: '2', segLen: '20', refAcc: '3.3', wxOn: true, bmkgAdm4: '' };
 function loadCfg() {
   let c = {};
   try { c = JSON.parse(localStorage.getItem('fobos.cfg') || '{}'); } catch (e) { c = {}; }
@@ -583,6 +583,7 @@ async function exportSession(sess, what) {
     const files = [{ name: `${sess}_web_posisi.csv`, data: trackCsv(f.pts) }, { name: `${sess}_web_imu5hz.csv`, data: imuCsv(f.imu) },
       { name: `${sess}_web_rawx1hz.ubx`, data: ubx() }, { name: `${sess}_web_jejak.geojson`, data: trackGeoJson(f.pts.filter((p) => p.q > 0), sess) },
       { name: `${sess}_laporan.json`, data: JSON.stringify(f.rep, null, 2) }];
+    if ((typeof WX !== 'undefined' && WX) && WX.logs[sess] && WX.logs[sess].length) files.push({ name: `${sess}_cuaca.json`, data: JSON.stringify({ sumber: 'Open-Meteo (CC BY 4.0), dicatat peramban selama sesi', catatan: WX.logs[sess] }, null, 2) });
     download(`${sess}_web.zip`, makeZip(files));
   } else if (what === 'ubx') { if (!f.raw.length) return toast('Tidak ada data raw GNSS pada sesi ini.'); download(`${sess}_web_rawx1hz.ubx`, ubx()); }
   else if (what === 'imucsv') { if (!f.imu.length) return toast('Tidak ada data IMU.'); download(`${sess}_web_imu5hz.csv`, imuCsv(f.imu), 'text/csv'); }
@@ -750,6 +751,7 @@ $('#dlgSettings').addEventListener('close', () => {
   for (const k of Object.keys(DEF)) { const el = f.elements[k]; if (!el) continue; c[k] = el.type === 'checkbox' ? el.checked : el.value.trim(); }
   if (!c.prefix) c.prefix = 'fobos';
   sessionPass = c.cloudPass; sessionUser = c.cloudUser; CFG = c; saveCfg(c); renderLegend(); for (const d of devices.values()) redrawTrack(d);
+  if ((typeof WX !== 'undefined' && WX)) WX.applyCfg();
   toast('Pengaturan disimpan. Klik Sambungkan (atau Putuskan lalu Sambungkan).');
 });
 $('#btnConnect').onclick = connect;
@@ -769,8 +771,10 @@ function renderSummary() {
   const d = devices.get(selected); $('#sumWho').textContent = d ? d.id : '';
   if (!d || !d.st.n) { $('#sumBody').innerHTML = '<span class="muted small">Belum ada jejak.</span>'; return; }
   const m = sumOf(d);
+  const wx = ((typeof WX !== 'undefined' && WX) && !d.replay && d.sess) ? WX.sessText(d.sess) : '';
   $('#sumBody').innerHTML = [['Jarak', m.dist], ['Durasi', m.dur], ['RTK fix', m.fix], ['Kec. maks', m.spd], ['Getaran rata²', m.vib], ['Guncangan', m.shock]]
-    .map(([k, v]) => `<div><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('');
+    .map(([k, v]) => `<div><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')
+    + (wx ? `<div class="wide"><span class="k">Cuaca selama sesi</span><span class="v">${esc(wx)}</span></div>` : '');
 }
 function renderSheetSum() {
   const d = devices.get(selected); const el = $('#sheetSum');
