@@ -5,7 +5,7 @@
 
 // ------------------------------------------------------------------ konfigurasi
 const DEF = { mode: 'cloud', cloudUrl: 'wss://mqtt.flespi.io:443', cloudUser: '', cloudPass: '', remember: false, autoZip: true,
-  localUrl: '', prefix: 'fobos', vibTh: '0.5,1,2', shockTh: '2', segLen: '20', refAcc: '3.3', wxOn: true, bmkgAdm4: '' };
+  localUrl: '', prefix: 'fobos', vibTh: '0.5,1,2', shockTh: '2', segLen: '20', refAcc: '3.3', wxOn: true, bmkgAdm4: '', osmOn: true };
 function loadCfg() {
   let c = {};
   try { c = JSON.parse(localStorage.getItem('fobos.cfg') || '{}'); } catch (e) { c = {}; }
@@ -112,7 +112,9 @@ const DEV_COLORS = ['#1f5fbf', '#8e24aa', '#00897b', '#6d4c41', '#c2185b', '#455
 let colorMode = 'q';
 function vibTh() { return CFG.vibTh.split(',').map(Number).filter((x) => !isNaN(x)).sort((a, b) => a - b); }
 function vibClass(v) { if (v === null || v === undefined || isNaN(v)) return -1; const th = vibTh(); let i = 0; while (i < th.length && v >= th[i]) i++; return Math.min(i, V_COLORS.length - 1); }
-function segColor(cls) { return colorMode === 'q' ? Q_INFO[cls][1] : (cls < 0 ? '#9e9e9e' : V_COLORS[cls]); }
+const hasWx = () => typeof WX !== 'undefined';
+function segColor(cls) { if (colorMode === 'w') return hasWx() ? WX.rainCol(cls) : '#9e9e9e'; return colorMode === 'q' ? Q_INFO[cls][1] : (cls < 0 ? '#9e9e9e' : V_COLORS[cls]); }
+function wxCls(d, p) { return hasWx() ? WX.rainCls(WX.rainAt(d, p._t)) : -1; }
 function ptClass(p) { return colorMode === 'q' ? p.q : vibClass(p.vib); }
 function num(x) { if (x === '' || x === null || x === undefined) return null; const v = Number(x); return isFinite(v) ? v : null; }
 function cfgNum(k, def) { const v = parseFloat(String(CFG[k]).replace(',', '.')); return isFinite(v) && v > 0 ? v : def; }
@@ -138,7 +140,11 @@ function newStats() { return { n: 0, nFix: 0, dist: 0, t0: null, t1: null, spdMa
 function renderLegend() {
   let h = '';
   if (colorMode === 'q') for (const q of [4, 3, 2, 1, 0]) h += `<div class="lg"><i style="background:${Q_INFO[q][1]}"></i>${Q_INFO[q][0]}</div>`;
-  else {
+  else if (colorMode === 'w') {
+    h += '<div class="small muted" style="margin-bottom:3px">curah hujan model di sepanjang jejak</div>';
+    if (hasWx()) WX.RAIN.forEach((r) => { h += `<div class="lg"><i style="background:${r[1]}"></i>${r[0]}</div>`; });
+    h += '<div class="lg"><i style="background:#d0d4d9"></i>belum ada data</div>';
+  } else {
     if (colorMode === 's') h += `<div class="small muted" style="margin-bottom:3px">rata-rata getaran per ${cfgNum('segLen', 20)} m lintasan</div>`;
     const th = vibTh(); const lab = ['< ' + th[0]]; for (let i = 0; i < th.length - 1; i++) lab.push(`${th[i]}–${th[i + 1]}`); lab.push('≥ ' + th[th.length - 1]);
     lab.forEach((l, i) => { h += `<div class="lg"><i style="background:${V_COLORS[Math.min(i, 3)]}"></i>${l} m/s²</div>`; });
@@ -196,9 +202,10 @@ function addPoint(d, p) {
   d.pts.push(p);
   const prev = d.pts.length > 1 ? d.pts[d.pts.length - 2] : null;
   const gap = !prev || (Math.abs(p._t - prev._t) > 5000);
-  updStats(d, p, prev, gap);
+  updStats(d, p, prev, gap); p._d = d.st.dist;
+  if (typeof TRIP !== 'undefined') TRIP.point(d, p);
   if (colorMode === 's') { segAdd(d, p, prev, gap); return; }
-  const cls = ptClass(p);
+  const cls = colorMode === 'w' ? wxCls(d, p) : ptClass(p);
   if (!d.cur || d.cur.cls !== cls || gap) {
     const ll = (prev && !gap) ? [[prev.lat, prev.lon], [p.lat, p.lon]] : [[p.lat, p.lon]];
     const pl = L.polyline(ll, { color: segColor(cls), weight: 5, opacity: 0.9 }).addTo(d.layer);
@@ -680,6 +687,7 @@ function selectDevice(id) {
   renderDevices(); drawVib();
 }
 function drawVib() {
+  if (typeof TRIP !== 'undefined' && TRIP.chart(devices.get(selected))) return;
   const d0 = devices.get(selected); $('#vibTitle').textContent = 'Indeks getaran' + (d0 ? ' — ' + d0.id : '');
   const cv = $('#vibCanvas'); if (!cv.offsetParent) return;           // panel tertutup
   const dpr = window.devicePixelRatio || 1;
@@ -771,10 +779,9 @@ function renderSummary() {
   const d = devices.get(selected); $('#sumWho').textContent = d ? d.id : '';
   if (!d || !d.st.n) { $('#sumBody').innerHTML = '<span class="muted small">Belum ada jejak.</span>'; return; }
   const m = sumOf(d);
-  const wx = ((typeof WX !== 'undefined' && WX) && !d.replay && d.sess) ? WX.sessText(d.sess) : '';
   $('#sumBody').innerHTML = [['Jarak', m.dist], ['Durasi', m.dur], ['RTK fix', m.fix], ['Kec. maks', m.spd], ['Getaran rata²', m.vib], ['Guncangan', m.shock]]
     .map(([k, v]) => `<div><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')
-    + (wx ? `<div class="wide"><span class="k">Cuaca selama sesi</span><span class="v">${esc(wx)}</span></div>` : '');
+    + (typeof TRIP !== 'undefined' ? TRIP.summaryHtml(d) : '') + (hasWx() ? WX.timelineHtml(d) : '');
 }
 function renderSheetSum() {
   const d = devices.get(selected); const el = $('#sheetSum');
@@ -801,6 +808,7 @@ function renderHud() {
   const m = sumOf(d);
   $('#hudSum').innerHTML = [['Jarak', m.dist], ['Durasi', m.dur], ['RTK fix', m.fix], ['Guncangan', m.shock]]
     .map(([k, val]) => `<div><span class="hl">${k}</span><b>${esc(val)}</b></div>`).join('');
+  if (typeof TRIP !== 'undefined') TRIP.hud(d);
 }
 
 // ------------------------------------------------------------------ panel buka/tutup, lembar bawah, menu (rencana 1 & 2)
@@ -1108,7 +1116,7 @@ $('#btnCloseReplay').onclick = () => $('#dlgReplay').close();
 // ------------------------------------------------------------------ mulai
 (async () => {
   await Store.open();
-  if (UI.mode && ['q', 'v', 's'].includes(UI.mode)) { colorMode = UI.mode; document.querySelectorAll('#legend .seg button').forEach((x) => x.classList.toggle('on', x.dataset.mode === colorMode)); }
+  if (UI.mode && ['q', 'v', 's', 'w'].includes(UI.mode)) { colorMode = UI.mode; document.querySelectorAll('#legend .seg button').forEach((x) => x.classList.toggle('on', x.dataset.mode === colorMode)); }
   if (UI.acc === false) $('#chkAcc').checked = false;
   if (UI.shock === false) $('#chkShock').checked = false;
   if (UI.follow === false) $('#chkFollow').checked = false;

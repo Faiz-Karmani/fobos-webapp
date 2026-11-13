@@ -58,6 +58,7 @@
             <button data-mode="q" class="on">Kualitas</button>
             <button data-mode="v">Getaran</button>
             <button data-mode="s">Segmen</button>
+            <button data-mode="w">Hujan</button>
           </div>
           <div id="legendBody"></div>
           <label class="small"><input type="checkbox" id="chkFollow" checked> ikuti perangkat terpilih</label>
@@ -75,7 +76,8 @@
       <div id="vibPanel" class="panel" data-key="vib">
         <div class="ph"><b id="vibTitle">Indeks getaran</b><button class="icon tog" aria-label="Tutup/buka">▾</button></div>
         <div class="pb">
-          <div class="small muted">RMS percepatan searah gravitasi per detik (m/s²), relatif — bukan IRI</div>
+          <div class="seg" id="chartTabs"><button data-tab="v" class="on">Getaran</button><button data-tab="e">Elevasi</button></div>
+          <div class="small muted" id="chartCap">RMS percepatan searah gravitasi per detik (m/s²), relatif — bukan IRI</div>
           <canvas id="vibCanvas"></canvas>
         </div>
       </div>
@@ -98,6 +100,7 @@
         <div class="hud-id"><span id="hudId">–</span> <span id="hudMode" class="hud-tag">LANGSUNG</span></div>
         <div id="hudQ" class="hud-q q0">TANPA FIX</div>
       </div>
+      <div id="hudRoad" class="hud-road"></div>
       <div class="hud-big">
         <div><span class="hl">Ketelitian</span><b id="hudAcc">–</b></div>
         <div><span class="hl">Satelit</span><b id="hudSv">–</b></div>
@@ -143,6 +146,7 @@
       </label>
       <label>Rujukan ketelitian GNSS standar (m) <input name="refAcc" value="3.3" inputmode="decimal"></label>
       <label class="small"><input type="checkbox" name="wxOn" checked> tampilkan cuaca (Open-Meteo, butuh internet)</label>
+      <label class="small"><input type="checkbox" name="osmOn" checked> tampilkan info ruas jalan (OpenStreetMap, butuh internet)</label>
       <label>Kode wilayah BMKG (adm4, opsional) <input name="bmkgAdm4" placeholder="contoh: 34.04.04.2003" inputmode="text"></label>
       <p class="small muted">Kode adm4 = kode kelurahan/desa Kemendagri (format xx.xx.xx.xxxx). Kosongkan bila tidak dipakai.</p>
     </fieldset>
@@ -187,5 +191,6 @@
 <script src="lib/mqtt.min.js"></script>
 <script src="app.js"></script>
 <script src="weather.js"></script>
+<script src="trip.js"></script>
 </body>
 </html>

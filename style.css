@@ -234,3 +234,71 @@ body.expo .wx-hourly .wx-tv{fill:#ffb366}
   .hud-wx{font-size:12px;padding-top:6px}
   body.expo #hudWx{display:block}
 }
+
+/* ---- v2.4: tata letak panel agar tidak meluap, cuaca perjalanan, elevasi, ruas jalan */
+.corner.tl{bottom:236px}.corner.tr{bottom:44px}
+.corner .panel{display:flex;flex-direction:column;min-height:0}
+.corner .panel .ph{flex:none}
+.corner .panel .pb{overflow:auto;min-height:0;overscroll-behavior:contain}
+#legend{flex:none}
+#sumPanel{max-width:330px}
+#legend .seg button{padding:4px 7px}
+#chartTabs{margin:0 0 4px}
+#chartTabs button{padding:3px 10px;font-size:12px}
+#chartCap{min-height:2.6em}
+.wx-alert{border-radius:8px;padding:5px 9px;font-weight:700;font-size:12px;margin-bottom:6px}
+.wx-alert.dry{background:#e8f5ec;color:#17713d}.wx-alert.soon{background:#fff3d6;color:#8a5a00}.wx-alert.wet{background:#dcebff;color:#0b3d91}.wx-alert.rp{background:#eef1f5;color:#3b4654}
+.wx-sec{margin-top:8px;border-top:1px solid var(--line);padding-top:6px;font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted)}
+.wx-layers{display:flex;flex-wrap:wrap;gap:2px 12px;font-size:12px;margin-top:2px}
+.wx-layers label{white-space:nowrap}
+.wx-lg{display:flex;gap:10px;font-size:10px;color:var(--muted);margin-top:4px}
+.wx-lg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:3px;vertical-align:-1px}
+.wx-static *{animation:none!important}
+.wx-pin{background:none;border:0}
+.wx-pin-b{display:flex;align-items:center;gap:1px;background:rgba(255,255,255,.96);border:2px solid #a8b3bf;border-radius:15px;padding:0 7px 0 2px;height:28px;box-shadow:0 2px 6px rgba(0,0,0,.25);font-size:12px;position:relative}
+.wx-pin-b:after{content:"";position:absolute;left:50%;bottom:-8px;width:2px;height:8px;background:#6b7380;transform:translateX(-50%)}
+.wx-pin-b .wx-ic{width:24px;height:24px}
+.wx-tl{margin-top:4px;border-top:1px solid var(--line);padding-top:5px}
+.wx-tl em{font-style:normal;font-size:10px}
+.wx-tl-ic{position:relative;height:30px}
+.wx-tl-ic span{position:absolute;top:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;font-size:10px;line-height:1}
+.wx-tl-ic .wx-ic{width:20px;height:20px}
+.wx-tl-bar{position:relative;display:flex;height:9px;border-radius:5px;overflow:hidden;background:#e6e9ed}
+.wx-tl-bar i{display:block;height:100%}
+.wx-tl-bar u{position:absolute;top:-2px;bottom:-2px;width:2px;background:#d73027}
+.wx-tl-x{display:flex;justify-content:space-between;font-size:10px;color:var(--muted)}
+.wx-tl-t{font-size:11px;font-weight:600}
+.sumgrid .rd{margin-top:4px;border-top:1px solid var(--line);padding-top:5px}
+.rd-n{font-size:14px!important}
+.rd-t{font-size:11px;color:var(--muted)}
+.rd-tg{border:0;background:none;padding:2px 0;font-size:11px;color:var(--pri);text-align:left;cursor:pointer}
+.rd-row{display:grid;grid-template-columns:1fr auto auto;gap:8px;font-size:11px;padding:1px 0}
+.rd-row span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rd-row span:last-child{font-weight:700;min-width:58px;text-align:right}
+.rd-note{font-size:10px;color:var(--muted)}
+.hud-road{font-size:14px;color:#c9d6e2;margin-top:-4px}
+.hud-road:empty{display:none}
+.hud-al{display:inline-block;margin-left:8px;padding:1px 8px;border-radius:10px;background:#2a4a78;color:#cfe3ff;font-size:12px}
+body.expo .wx-alert.dry{background:#12301f;color:#7fe0a3}body.expo .wx-alert.soon{background:#3a2c08;color:#ffd27a}body.expo .wx-alert.wet{background:#10294d;color:#b9d6ff}body.expo .wx-alert.rp{background:#1c2836;color:#c9d6e2}
+body.expo .wx-sec,body.expo .wx-lg{color:#9fb0c2;border-color:#2b3d50}
+body.expo .corner.tl{display:none}
+@media (max-width:760px){
+  .corner.tl,.corner.tr{bottom:calc(var(--sheetH) + 74px)}
+  #sumPanel{max-width:calc(100vw - 16px)}
+  .hud-road{font-size:12px;margin-top:-2px}
+  .hud-al{margin-left:0;margin-top:3px}
+}
+/* perbaikan: aturan umum ".sumgrid div" tidak boleh mengubah susunan blok di dalam baris lebar */
+.sumgrid .wx-tl-bar,.sumgrid .wx-tl-x{flex-direction:row}
+.sumgrid .wx-tl-ic{display:block}
+.sumgrid .rd-row{display:grid}
+@media (max-width:760px){
+  /* ponsel: tiga chip sebaris di atas; panel yang dibuka tampil selebar layar di bawahnya */
+  #cTR{flex-direction:row;align-items:flex-start;gap:6px}
+  #cTL .panel.min .ph,#cTR .panel.min .ph{font-size:12px;padding:4px 2px 4px 9px;gap:4px}
+  #cTL .panel.min #sumWho{display:none}
+  #cTL .panel:not(.min),#cTR .panel:not(.min){position:fixed;left:8px;right:8px;top:98px;width:auto;max-width:none;max-height:calc(100dvh - 190px - var(--sheetH))}
+  body.replaying #cTL .panel:not(.min),body.replaying #cTR .panel:not(.min){max-height:calc(100dvh - 290px - var(--sheetH))}
+}
+@media (min-width:761px){body.expo #hudWx{display:none}body.expo #vibCanvas{height:120px}}
+@media (max-width:760px){#wxPanel.min{width:auto}#cTR .panel.min .ph b{flex:none}.wx-brief{font-size:12px}}
