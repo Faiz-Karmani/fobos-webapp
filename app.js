@@ -2,6 +2,7 @@
  * Tanpa server: semua berjalan di browser. Raw GNSS/IMU selama sesi disimpan di IndexedDB.
  * Format pesan: lihat PANDUAN.md bagian "Protokol". */
 'use strict';
+window.FOBOS_JS_VER = '2.5.1';        // harus sama dengan FOBOS_HTML_VER di index.html
 
 // ------------------------------------------------------------------ konfigurasi
 const DEF = { mode: 'cloud', cloudUrl: 'wss://mqtt.flespi.io:443', cloudUser: '', cloudPass: '', remember: false, autoZip: true,

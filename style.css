@@ -342,3 +342,5 @@ body.expo.replaying .corner.bl{bottom:64px}
   body.expo .corner.bl{left:432px}
   body.expo #vibPanel .pb{width:min(900px,calc(100vw - 790px))}
 }
+#verWarn{position:fixed;z-index:3000;left:50%;top:60px;transform:translateX(-50%);max-width:min(640px,calc(100vw - 20px));background:#fff4e5;color:#5d3a00;border:2px solid #f39c12;border-radius:10px;padding:10px 14px;font-size:14px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+#verWarn button{margin-left:6px}

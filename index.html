@@ -7,7 +7,7 @@
 <title>Fobos Mini — Pemantauan</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="lib/leaflet.css">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=2.5.1">
 </head>
 <body>
 <header>
@@ -187,8 +187,26 @@
 
 <script src="lib/leaflet.js"></script>
 <script src="lib/mqtt.min.js"></script>
-<script src="app.js"></script>
-<script src="weather.js"></script>
-<script src="trip.js"></script>
+<script>
+  // Penjaga versi: bila salah satu skrip gagal atau versinya tidak sama (biasanya cache browser/GitHub Pages), tampilkan petunjuk.
+  window.FOBOS_HTML_VER = '2.5.1'; window.FOBOS_ERRS = [];
+  window.addEventListener('error', function (e) { window.FOBOS_ERRS.push((e.filename || '').split('/').pop() + ': ' + e.message); });
+</script>
+<script src="app.js?v=2.5.1"></script>
+<script src="weather.js?v=2.5.1"></script>
+<script src="trip.js?v=2.5.1"></script>
+<script>
+  (function () {
+    var bad = window.FOBOS_JS_VER !== window.FOBOS_HTML_VER;
+    if (!bad && !window.FOBOS_ERRS.length) return;
+    var b = document.createElement('div'); b.id = 'verWarn';
+    b.innerHTML = '<b>Web app tidak termuat sempurna.</b> ' + (bad
+      ? 'Versi file tidak sama (halaman ' + window.FOBOS_HTML_VER + ', skrip ' + (window.FOBOS_JS_VER || 'lama') + '). Biasanya karena cache browser.'
+      : 'Galat: ' + window.FOBOS_ERRS.slice(0, 2).join(' | ')) +
+      ' Tekan <b>Ctrl + F5</b> (ponsel: tarik untuk memuat ulang). Bila memakai GitHub Pages, tunggu ±10 menit setelah mengunggah semua isi folder <code>docs</code>.' +
+      ' <button onclick="location.reload(true)">Muat ulang</button>';
+    document.body.appendChild(b);
+  })();
+</script>
 </body>
 </html>
