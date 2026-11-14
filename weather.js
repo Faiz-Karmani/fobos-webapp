@@ -1,7 +1,7 @@
 /* Fobos Mini — modul cuaca (opsional; web app tetap jalan bila modul ini gagal).
  * Sumber: Open-Meteo (cuaca model + arsip, tanpa API key), RainViewer (radar hujan, max zum 7),
  * BMKG (prakiraan kelurahan, perlu kode adm4 di Pengaturan). Semua dipanggil langsung dari browser.
- * Dimuat setelah app.js dan memakai variabel global app.js (map, devices, selected, RP, UI, $, esc, CFG, ...).
+ * Dimuat setelah app.js dan memakai variabel global app.js (map, devices, selected, UI, $, esc, CFG, ...).
  *
  * W1 cuaca sepanjang jejak (ikon + mode warna "Hujan")   W2 linimasa cuaca perjalanan (Ringkasan)
  * W3 cuaca saat rekaman pada Putar ulang                  W4 peta hujan model (kisi)
@@ -174,7 +174,7 @@ const WX = (() => {
   }
   function maybeTrack() {
     if (!S.on) return; const d = devices.get(selected); if (!d) return;
-    const pts = d.replay ? (RP.on && RP.d === d ? RP.pts : null) : d.pts; if (!pts || pts.length < 2) return;
+    const pts = d.replay ? (d.rp ? d.rp.pts : null) : d.pts; if (!pts || pts.length < 2) return;
     const W = d.wx; const now = Date.now();
     if (W && W.busy) return;
     if (W && !d.replay && pts.length < W.n) { W.samples = []; W.at = 0; }                // jejak dihapus
@@ -219,7 +219,7 @@ const WX = (() => {
     const wet = s.filter((x) => x.mm >= 0.1); const tt = s.map((x) => x.temp); const lo = Math.min(...tt), hi = Math.max(...tt);
     const txt = (wet.length ? `Hujan di ${wet.length} dari ${n} titik contoh · maks ${fmt1(Math.max(...wet.map((x) => x.mm)))} mm/j` : 'Kering sepanjang perjalanan')
       + ` · ${lo === hi ? fmt1(lo) : fmt1(lo) + '–' + fmt1(hi)}°C`;
-    const cur = (d.replay && RP.on && span > 0) ? `<u style="left:${Math.max(0, Math.min(100, (RP.cur - t0) / span * 100)).toFixed(1)}%"></u>` : '';
+    const cur = (d.replay && d.rp && span > 0) ? `<u style="left:${Math.max(0, Math.min(100, (d.rp.cur - t0) / span * 100)).toFixed(1)}%"></u>` : '';
     return `<div class="wide wx-tl"><span class="k">Cuaca perjalanan <em>(${W.src === 'arsip' ? 'arsip historis' : 'model'} Open-Meteo)</em></span>
       <div class="wx-tl-ic">${ics}</div><div class="wx-tl-bar">${bar}${cur}</div>
       <div class="wx-tl-x"><span>${esc(clockLabel(t0))}</span><span>${esc(clockLabel(t1))}</span></div><span class="wx-tl-t">${esc(txt)}</span></div>`;
@@ -247,7 +247,7 @@ const WX = (() => {
   function cardData() {
     const rp = refPos();
     if (rp && rp.d.replay) {
-      const x = nearest(rp.d, RP.cur);
+      const x = rp.d.rp ? nearest(rp.d, rp.d.rp.cur) : null;
       if (!x) return { replay: true, c: null, wait: !(rp.d.wx && rp.d.wx.err), err: rp.d.wx && rp.d.wx.err };
       return { replay: true, x, src: rp.d.wx.src, c: { temperature_2m: x.temp, apparent_temperature: x.app, relative_humidity_2m: x.rh, precipitation: x.mm, weather_code: x.code,
         cloud_cover: x.cc, wind_speed_10m: x.ws, wind_direction_10m: x.wd, wind_gusts_10m: x.wg, is_day: x.day } };
@@ -429,7 +429,7 @@ const WX = (() => {
     maybeTrack();
     if (S.trkFor !== (selected || '')) { drawTrackIcons(); S.cardKey = ''; }
     const d = devices.get(selected);
-    const key = (selected || '') + '|' + (d && d.replay ? (() => { const x = nearest(d, RP.cur); return x ? x.tg : (d.wx && d.wx.err) || 'w'; })() : 'live');
+    const key = (selected || '') + '|' + (d && d.replay ? (() => { const x = d.rp ? nearest(d, d.rp.cur) : null; return x ? x.tg : (d.wx && d.wx.err) || 'w'; })() : 'live');
     if (key !== S.cardKey) { S.cardKey = key; render(); }
   }
   function init() {

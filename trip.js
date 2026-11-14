@@ -134,7 +134,7 @@ const TRIP = (() => {
   function chart(d) {
     const cap = $('#chartCap');
     if (tab !== 'e') { if (cap && cap.textContent !== VIB_CAP) cap.textContent = VIB_CAP; return false; }
-    $('#vibTitle').textContent = 'Profil elevasi' + (d ? ' — ' + d.id : '');
+    $('#vibTitle').textContent = 'Profil elevasi' + (d ? ' — ' + dn(d) : '');
     const cv = $('#vibCanvas'); if (!cv.offsetParent) return true;
     const dpr = window.devicePixelRatio || 1; const W = Math.max(200, cv.clientWidth), H = Math.max(60, cv.clientHeight);
     if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }

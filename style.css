@@ -76,7 +76,6 @@ ul.tight{margin:4px 0;padding-left:18px}
 #playBar[hidden]{display:none}
 #rpSlider{flex:1;min-width:80px}
 #rpName{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-body.replaying .corner.bl{bottom:78px}
 
 /* penanda guncangan */
 .shock{width:18px;height:18px}
@@ -151,10 +150,6 @@ body.expo #playBar{background:rgba(16,26,37,.92);color:#e6edf3;border-color:#2b3
   #btnSideOpen{display:none!important}
   .leaflet-control-zoom{display:none}
   .corner.bl{bottom:calc(var(--sheetH) + 26px)}
-  body.replaying .corner.bl{bottom:calc(var(--sheetH) + 112px)}
-  #playBar{bottom:calc(var(--sheetH) + 24px);flex-wrap:wrap;gap:6px;padding:6px 8px}
-  #playBar #rpSlider{order:9;flex-basis:100%}
-  #playBar label.nowrap,#rpName{display:none}
   .corner.tl{top:8px;left:8px}.corner.tr{top:8px;right:8px}
   #legend{min-width:0}
   #vibPanel .pb{width:calc(100vw - 40px)}
@@ -298,7 +293,52 @@ body.expo .corner.tl{display:none}
   #cTL .panel.min .ph,#cTR .panel.min .ph{font-size:12px;padding:4px 2px 4px 9px;gap:4px}
   #cTL .panel.min #sumWho{display:none}
   #cTL .panel:not(.min),#cTR .panel:not(.min){position:fixed;left:8px;right:8px;top:98px;width:auto;max-width:none;max-height:calc(100dvh - 190px - var(--sheetH))}
-  body.replaying #cTL .panel:not(.min),body.replaying #cTR .panel:not(.min){max-height:calc(100dvh - 290px - var(--sheetH))}
 }
 @media (min-width:761px){body.expo #hudWx{display:none}body.expo #vibCanvas{height:120px}}
 @media (max-width:760px){#wxPanel.min{width:auto}#cTR .panel.min .ph b{flex:none}.wx-brief{font-size:12px}}
+
+/* ---- v2.5: putar ulang banyak kendaraan (kontrol di panel perangkat) */
+#rpMaster{margin:8px;padding:8px 10px;border:1px solid #d7ccc8;background:#fbf7f5;border-radius:8px}
+#rpMaster[hidden]{display:none}
+.rpm-h{display:flex;justify-content:space-between;align-items:baseline;gap:6px;margin-bottom:6px}
+.rpm-b{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:4px}
+.rpm-b button{font-size:12px;padding:4px 8px}
+.rpm-b select{font-size:12px;padding:3px 6px;border:1px solid var(--line);border-radius:6px;background:#fff}
+.card.rpc h4{flex-wrap:wrap}
+.rp-nm{display:flex;align-items:center;gap:4px;min-width:0}
+.rp-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px}
+.rp-ed{border:0;background:none;padding:0 4px;font-size:13px;color:var(--muted);cursor:pointer}
+.rp-in{font:inherit;font-weight:700;width:150px;padding:1px 4px;border:1px solid var(--pri);border-radius:4px}
+.rp-hr{display:flex;align-items:center;gap:6px}
+.rp-grp{display:flex;align-items:center;gap:2px;color:var(--muted);cursor:pointer}
+.rp-ctl{display:flex;align-items:center;gap:6px;margin:4px 0 2px}
+.rp-ctl .rp-sl{flex:1;min-width:60px}
+.rp-ctl button{width:34px;height:30px;padding:0}
+.rp-ctl select{font-size:12px;padding:3px 4px;border:1px solid var(--line);border-radius:6px;background:#fff}
+.rp-ctl2{display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center;margin-bottom:4px}
+.rp-ctl2 .rp-tm{font-variant-numeric:tabular-nums;font-weight:600}
+.rp-ctl2 label{margin-left:auto}
+#rpSheetBtn{display:none;width:34px;height:30px;padding:0;margin-left:6px}
+#rpMini{display:none}
+body.expo #rpMini:not([hidden]){display:flex;position:absolute;z-index:850;left:50%;transform:translateX(-50%);bottom:18px;align-items:center;gap:8px;background:rgba(16,26,37,.92);color:#e6edf3;border:1px solid #2b3d50;border-radius:12px;padding:6px 12px}
+#rpMini button{width:38px;height:32px;padding:0}
+.hud-fleet{display:flex;flex-direction:column;gap:3px;border-top:1px solid #2b3d50;padding-top:10px}
+.hud-fleet:empty{display:none}
+.hud-fleet .hl{font-size:12px;color:#9fb0c2;text-transform:uppercase;letter-spacing:1px;margin-bottom:2px}
+.hf-row{display:grid;grid-template-columns:12px 1fr 62px 62px 44px;gap:8px;align-items:center;font-size:14px;padding:3px 6px;border-radius:6px;cursor:pointer}
+.hf-row.on{background:rgba(74,163,255,.16)}
+.hf-row i{width:10px;height:10px;border-radius:50%}
+.hf-n{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hf-q{font-size:13px!important;font-weight:800;letter-spacing:0}
+.hf-row span:last-child{text-align:right;font-weight:700}
+@media (max-width:760px){
+  #rpSheetBtn:not([hidden]){display:inline-block}
+  .rp-label{max-width:120px}
+  .hf-row{font-size:12px;grid-template-columns:10px 1fr 52px 54px 38px;gap:5px}
+  body.expo #rpMini:not([hidden]){bottom:calc(var(--sheetH) + 12px)}
+}
+body.expo.replaying .corner.bl{bottom:64px}
+@media (min-width:761px){
+  body.expo .corner.bl{left:432px}
+  body.expo #vibPanel .pb{width:min(900px,calc(100vw - 790px))}
+}

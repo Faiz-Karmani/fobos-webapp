@@ -35,8 +35,10 @@
       <span class="grip" aria-hidden="true"></span>
       <span class="sh-title">Perangkat <span class="muted small" id="devCount">0</span></span>
       <span class="sh-sum small" id="sheetSum"></span>
+      <button class="primary icon" id="rpSheetBtn" hidden aria-label="Putar/jeda grup putar ulang">▶</button>
       <button class="icon tog" id="btnSide" aria-label="Tutup/buka panel perangkat">«</button>
     </div>
+    <div id="rpMaster" hidden></div>
     <div id="devList"><p class="muted small pad">Belum ada perangkat. Sambungkan ke broker lalu nyalakan Fobos Mini, jalankan simulator, atau pilih <b>Putar ulang</b> untuk memutar rekaman.</p></div>
   </aside>
   <section id="mapWrap">
@@ -83,16 +85,9 @@
       </div>
     </div>
 
-    <div id="playBar" hidden>
-      <button id="rpPlay" class="primary icon" aria-label="Putar/jeda">▶</button>
-      <input id="rpSlider" type="range" min="0" max="1000" value="0" aria-label="Posisi waktu">
-      <span id="rpTime" class="small">00:00:00 / 00:00:00</span>
-      <select id="rpSpeed" aria-label="Kecepatan putar">
-        <option value="1">1×</option><option value="2">2×</option><option value="5" selected>5×</option><option value="10">10×</option><option value="20">20×</option>
-      </select>
-      <label class="small nowrap"><input type="checkbox" id="rpSkip" checked> lewati jeda</label>
-      <span id="rpName" class="small muted"></span>
-      <button id="rpExit" class="icon" aria-label="Tutup putar ulang">✕</button>
+    <div id="rpMini" hidden>
+      <button id="rpMiniPlay" class="primary icon" aria-label="Putar/jeda grup">▶</button>
+      <span id="rpMiniTxt" class="small"></span>
     </div>
 
     <div id="hud" hidden>
@@ -109,6 +104,7 @@
       </div>
       <div class="hud-cmp" id="hudCmp"></div>
       <div id="hudSum" class="hud-sum"></div>
+      <div id="hudFleet" class="hud-fleet"></div>
       <div id="hudWx" class="hud-wx"></div>
     </div>
     <button id="btnExpoExit" hidden>✕ <span class="lbl">Keluar mode pameran</span></button>
@@ -166,7 +162,7 @@
 </dialog>
 
 <dialog id="dlgReplay">
-  <h3>Putar ulang rekaman</h3>
+  <h3>Putar ulang rekaman (bisa banyak kendaraan)</h3>
   <p class="small muted">Untuk demo di dalam ruangan (pameran) ketika RTK tidak bisa fix. Data diputar di peta seperti siaran langsung, lengkap dengan grafik getaran, penanda guncangan, dan ringkasan.</p>
   <fieldset>
     <legend>Dari file</legend>
@@ -176,7 +172,9 @@
       <li><b>F####_pos.csv</b> dari kartu SD, boleh bersama <b>F####_imu.csv</b> (getaran dihitung dari IMU 200 Hz)</li>
       <li><b>_web_posisi.csv</b>, atau <b>.pos RTKLIB</b> (hasil PPK, format lat/lon derajat)</li>
       <li>.zip berisi file-file di atas (terkompresi atau tidak)</li>
+      <li><b>CSV IMU</b> mentah (kolom <code>time_s</code> waktu Unix atau <code>tow_s</code>, dan <code>ax, ay, az</code>), mis. <code>imu.csv</code> 100 Hz</li>
     </ul>
+    <p class="small"><b>Banyak kendaraan:</b> pilih beberapa file posisi sekaligus (Ctrl/Shift + klik). Tiap file posisi menjadi satu kendaraan. File IMU dipasangkan otomatis ke rekaman posisi yang waktunya bertumpang tindih. IMU juga bisa ditambahkan belakangan lewat tombol <b>＋ IMU</b> di kartu kendaraan. Membuka dialog ini lagi <b>menambah</b> kendaraan, tidak mengganti yang sudah ada.</p>
   </fieldset>
   <fieldset>
     <legend>Dari rekaman di browser ini</legend>

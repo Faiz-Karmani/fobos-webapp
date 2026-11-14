@@ -108,7 +108,7 @@ L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
 
 const Q_INFO = { 4: ['RTK fix', '#1a9850'], 3: ['RTK float', '#f39c12'], 2: ['DGNSS', '#2c7fb8'], 1: ['Single', '#d73027'], 0: ['Tanpa fix', '#9e9e9e'] };
 const V_COLORS = ['#1a9850', '#d9c800', '#f39c12', '#d73027'];
-const DEV_COLORS = ['#1f5fbf', '#8e24aa', '#00897b', '#6d4c41', '#c2185b', '#455a64'];
+const DEV_COLORS = ['#1f5fbf', '#8e24aa', '#00897b', '#e65100', '#c2185b', '#455a64', '#6d4c41', '#0097a7'];
 let colorMode = 'q';
 function vibTh() { return CFG.vibTh.split(',').map(Number).filter((x) => !isNaN(x)).sort((a, b) => a - b); }
 function vibClass(v) { if (v === null || v === undefined || isNaN(v)) return -1; const th = vibTh(); let i = 0; while (i < th.length && v >= th[i]) i++; return Math.min(i, V_COLORS.length - 1); }
@@ -161,10 +161,12 @@ document.querySelectorAll('#legend .seg button').forEach((b) => b.onclick = () =
 // ------------------------------------------------------------------ perangkat
 const devices = new Map();
 let selected = null;
+const dn = (d) => (d && (d.label || d.id)) || '';
 function dev(id, opt) {
   let d = devices.get(id);
   if (d) return d;
-  const color = DEV_COLORS[devices.size % DEV_COLORS.length];
+  const used = new Set([...devices.values()].map((x) => x.color));
+  const color = DEV_COLORS.find((c) => !used.has(c)) || DEV_COLORS[devices.size % DEV_COLORS.length];
   d = { id, color, pts: [], segs: [], cur: null, marker: null, status: null, last: null, lastRx: 0, vib: [],
         sess: '', rec: null, pvtBuf: [], imuBuf: [], imu: null, imuRx: 0,
         shocks: [], st: newStats(), sg: null, lastShockT: -1e15, vibSec: null, replay: !!(opt && opt.replay) };
@@ -222,7 +224,7 @@ function redrawTrack(d) {
 function placeMarker(d, p) {
   if (!d.marker) {
     d.marker = L.circleMarker([p.lat, p.lon], { radius: markerR(), color: '#fff', weight: 2, fillColor: d.color, fillOpacity: 1 }).addTo(d.layer);
-    d.marker.bindTooltip(d.id, { permanent: true, direction: 'top', offset: [0, -8] });
+    d.marker.bindTooltip(dn(d), { permanent: true, direction: 'top', offset: [0, -8] });
     d.marker.on('click', () => selectDevice(d.id));
   } else d.marker.setLatLng([p.lat, p.lon]);
   if (d.id === selected) updAccCircles(d, p);
@@ -273,7 +275,7 @@ function shockIcon(fresh) { return L.divIcon({ className: 'shock' + (fresh ? ' n
 function shockMarker(d, s, fresh) {
   if (!$('#chkShock').checked) return;
   const m = L.marker([s.lat, s.lon], { icon: shockIcon(fresh), keyboard: false }).addTo(d.shockLayer);
-  m.bindPopup(`<b>Guncangan ${s.v.toFixed(2)} m/s²</b><br>${esc(d.id)} · ${esc(s.clock)}<br>posisi ${esc(qName(s.q))}${s.hacc != null ? ' ±' + fmtAcc(s.hacc) : ''}`);
+  m.bindPopup(`<b>Guncangan ${s.v.toFixed(2)} m/s²</b><br>${esc(dn(d))} · ${esc(s.clock)}<br>posisi ${esc(qName(s.q))}${s.hacc != null ? ' ±' + fmtAcc(s.hacc) : ''}`);
   if (fresh) setTimeout(() => m.setIcon(shockIcon(false)), 6000);
 }
 function drawShocks(d) { d.shockLayer.clearLayers(); for (const s of d.shocks) shockMarker(d, s, false); }
@@ -285,7 +287,7 @@ function evalShock(d, v, t) {
   d.lastShockT = t;
   const s = { lat: p.lat, lon: p.lon, v, q: p.q, hacc: p.hacc, t, clock: clockLabel(p._t ?? devTime(p)) };
   d.shocks.push(s); shockMarker(d, s, true);
-  if (!RP.quiet && (document.body.classList.contains('expo') || d.id === selected)) toast(`⚡ ${d.id}: guncangan ${v.toFixed(2)} m/s² terdeteksi`, 2500);
+  if (!RP.quiet && (document.body.classList.contains('expo') || d.id === selected)) toast(`⚡ ${dn(d)}: guncangan ${v.toFixed(2)} m/s² terdeteksi`, 2500);
 }
 
 // ------------------------------------------------------------------ MQTT
@@ -612,25 +614,15 @@ function scheduleRender() { if (!renderPending) { renderPending = true; requestA
 function renderDevices() {
   const list = $('#devList'); $('#devCount').textContent = devices.size; $('#devCount2').textContent = devices.size;
   renderSheetSum(); renderSummary(); renderHud();
-  if (document.activeElement && document.activeElement.tagName === 'SELECT' && list.contains(document.activeElement)) return;   // jangan ganggu pilihan yang sedang dibuka
+  renderRpMaster();
+  const ae = document.activeElement;
+  if (ae && /^(SELECT|INPUT)$/.test(ae.tagName) && list.contains(ae) && ae.type !== 'checkbox') return;   // jangan ganggu pilihan/isian yang sedang dipakai
+  if (listPointer) { listDirty = true; return; }                                                              // tunda selama jari/mouse menekan daftar
   if (!devices.size) { list.innerHTML = EMPTY_LIST; return; }
   const now = Date.now(); let h = '';
   for (const d of devices.values()) {
     const p = d.last || {}; const s = d.status || {};
-    if (d.replay) {
-      h += `<div class="card ${selected === d.id ? 'sel' : ''}" data-id="${esc(d.id)}">
-        <h4><span><i class="dot" style="background:${d.color}"></i>${esc(d.id)}</span><span class="badge rp">putar ulang</span></h4>
-        <div class="kv">
-          <span>Sumber</span><span>${esc(d.src || '')}</span>
-          <span>Posisi</span><span class="q${p.q ?? 0}">${qName(p.q ?? 0)}</span>
-          <span>Satelit / akurasi</span><span>${p.sv ?? '–'} · ±${fmtAcc(p.hacc)}</span>
-          <span>Kecepatan</span><span>${p.spd != null ? (p.spd * 3.6).toFixed(1) + ' km/j' : '–'}</span>
-          <span>Getaran</span><span>${p.vib != null ? p.vib.toFixed(2) + ' m/s²' : '–'}</span>
-          <span>Waktu</span><span>${p._t ? esc(clockLabel(p._t)) : '–'}</span>
-        </div>
-        <div class="actions"><button data-act="zoom">Ke perangkat</button><button data-act="rpclose" class="danger">Tutup putar ulang</button></div></div>`;
-      continue;
-    }
+    if (d.replay) { h += replayCard(d, p); continue; }
     const online = s.online !== false && (now - Math.max(d.lastRx, d.statusRx || 0) < 6000);
     const q = p.q ?? 0; const nt = s.ntrip || {}; const imu = s.imu || {}; const sd = s.sd || {}; const tm = s.time || {};
     const sessOn = !!(s.sess || d.sess);
@@ -671,7 +663,7 @@ $('#devList').addEventListener('click', (e) => {
   else if (act === 'csv' || act === 'geojson') exportTrack(id, act);
   else if (act === 'zoom') { const d = devices.get(id); if (d && d.last) map.setView([d.last.lat, d.last.lon], 18); selectDevice(id); if (isPhone()) setSheet('min'); }
   else if (act === 'clear') clearTrack(id);
-  else if (act === 'rpclose') replayStop();
+  else if (act && act.startsWith('rp')) replayAct(id, act, e.target);
 });
 $('#devList').addEventListener('change', (e) => {
   if (e.target.dataset.act !== 'rate') return;
@@ -688,7 +680,7 @@ function selectDevice(id) {
 }
 function drawVib() {
   if (typeof TRIP !== 'undefined' && TRIP.chart(devices.get(selected))) return;
-  const d0 = devices.get(selected); $('#vibTitle').textContent = 'Indeks getaran' + (d0 ? ' — ' + d0.id : '');
+  const d0 = devices.get(selected); $('#vibTitle').textContent = 'Indeks getaran' + (d0 ? ' — ' + dn(d0) : '');
   const cv = $('#vibCanvas'); if (!cv.offsetParent) return;           // panel tertutup
   const dpr = window.devicePixelRatio || 1;
   const cw = Math.max(200, cv.clientWidth), ch = Math.max(60, cv.clientHeight);
@@ -697,7 +689,7 @@ function drawVib() {
   const W = cw, H = ch; ctx.clearRect(0, 0, W, H);
   const d = d0; if (!d) return;
   const dark = document.body.classList.contains('expo');
-  const now = d.replay ? RP.cur : Date.now(), span = 120000; const pts = d.vib.filter((x) => now - x.t <= span && x.t <= now);
+  const now = d.replay && d.rp ? d.rp.cur : Date.now(), span = 120000; const pts = d.vib.filter((x) => now - x.t <= span && x.t <= now);
   const vmax = Math.max(vibTh().at(-1) * 1.25 || 2.5, cfgNum('shockTh', 2) * 1.1, ...pts.map((x) => x.v));
   ctx.strokeStyle = dark ? '#3a4b5e' : '#ccc'; ctx.fillStyle = dark ? '#9fb0c2' : '#888'; ctx.font = '11px sans-serif'; ctx.lineWidth = 1;
   for (const th of vibTh()) { const y = H - 14 - (th / vmax) * (H - 20); ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(28, y); ctx.lineTo(W, y); ctx.stroke(); ctx.fillText(th.toFixed(1), 2, y + 3); }
@@ -776,7 +768,7 @@ function sumOf(d) {
     spd: st.spdMax ? (st.spdMax * 3.6).toFixed(0) + ' km/j' : '–', vib: st.vibN ? (st.vibSum / st.vibN).toFixed(2) + ' m/s²' : '–', shock: String(d.shocks.length) };
 }
 function renderSummary() {
-  const d = devices.get(selected); $('#sumWho').textContent = d ? d.id : '';
+  const d = devices.get(selected); $('#sumWho').textContent = d ? dn(d) : '';
   if (!d || !d.st.n) { $('#sumBody').innerHTML = '<span class="muted small">Belum ada jejak.</span>'; return; }
   const m = sumOf(d);
   $('#sumBody').innerHTML = [['Jarak', m.dist], ['Durasi', m.dur], ['RTK fix', m.fix], ['Kec. maks', m.spd], ['Getaran rata²', m.vib], ['Guncangan', m.shock]]
@@ -786,14 +778,14 @@ function renderSummary() {
 function renderSheetSum() {
   const d = devices.get(selected); const el = $('#sheetSum');
   if (!d) { el.textContent = ''; return; }
-  const p = d.last || {}; el.innerHTML = `${esc(d.id)} · <span class="q${p.q ?? 0}">${esc(qName(p.q ?? 0))}</span>${p.hacc != null ? ' ±' + esc(fmtAcc(p.hacc)) : ''}`;
+  const p = d.last || {}; el.innerHTML = `${esc(dn(d))} · <span class="q${p.q ?? 0}">${esc(qName(p.q ?? 0))}</span>${p.hacc != null ? ' ±' + esc(fmtAcc(p.hacc)) : ''}`;
 }
 function renderHud() {
   if (!document.body.classList.contains('expo')) return;
   const d = devices.get(selected);
   if (!d) { $('#hudId').textContent = 'Menunggu perangkat…'; return; }
   const p = d.last || {}; const q = p.q ?? 0;
-  $('#hudId').textContent = d.id;
+  $('#hudId').textContent = dn(d);
   const tag = $('#hudMode'); tag.textContent = d.replay ? 'PUTAR ULANG' : 'LANGSUNG'; tag.classList.toggle('rp', d.replay);
   const hq = $('#hudQ'); hq.textContent = ({ 4: 'RTK FIX', 3: 'RTK FLOAT', 2: 'DGNSS', 1: 'SINGLE', 0: 'TANPA FIX' })[q]; hq.className = 'hud-q q' + q;
   $('#hudAcc').textContent = q > 0 && p.hacc != null ? '±' + fmtAcc(p.hacc) : '–';
@@ -809,7 +801,18 @@ function renderHud() {
   $('#hudSum').innerHTML = [['Jarak', m.dist], ['Durasi', m.dur], ['RTK fix', m.fix], ['Guncangan', m.shock]]
     .map(([k, val]) => `<div><span class="hl">${k}</span><b>${esc(val)}</b></div>`).join('');
   if (typeof TRIP !== 'undefined') TRIP.hud(d);
+  // armada: semua kendaraan sekaligus (klik untuk memilih)
+  const fl = $('#hudFleet');
+  if (devices.size < 2) { fl.innerHTML = ''; return; }
+  fl.innerHTML = '<div class="hl">Armada dipantau · ' + devices.size + ' kendaraan</div>' + [...devices.values()].map((x) => {
+    const pp = x.last || {}; const qq = pp.q ?? 0; const vv = x.replay ? pp.vib : (x.imu && x.imu.vib != null ? x.imu.vib : pp.vib);
+    const vc = vv == null ? '#9e9e9e' : V_COLORS[vibClass(vv)];
+    return `<div class="hf-row${x.id === selected ? ' on' : ''}" data-hf="${esc(x.id)}"><i style="background:${x.color}"></i><span class="hf-n">${esc(dn(x))}</span>`
+      + `<span class="hud-q q${qq} hf-q">${({ 4: 'FIX', 3: 'FLOAT', 2: 'DGNSS', 1: 'SINGLE', 0: '–' })[qq]}</span>`
+      + `<span>${pp.spd != null ? (pp.spd * 3.6).toFixed(0) + ' km/j' : '–'}</span><span style="color:${vc}">${vv != null ? vv.toFixed(2) : '–'}</span></div>`;
+  }).join('');
 }
+$('#hudFleet').addEventListener('click', (e) => { const r = e.target.closest('[data-hf]'); if (r) selectDevice(r.dataset.hf); });
 
 // ------------------------------------------------------------------ panel buka/tutup, lembar bawah, menu (rencana 1 & 2)
 const isPhone = () => window.matchMedia('(max-width:760px)').matches;
@@ -896,8 +899,17 @@ document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'visible' && document.body.classList.contains('expo') && navigator.wakeLock && !wakeLock) { try { wakeLock = await navigator.wakeLock.request('screen'); } catch (e) { /* abaikan */ } }
 });
 
-// ------------------------------------------------------------------ putar ulang (A)
-const RP = { on: false, d: null, pts: [], idx: 0, t0: 0, t1: 0, cur: 0, playing: false, last: 0, ghost: null, quiet: false, lastVibDraw: 0 };
+// ------------------------------------------------------------------ putar ulang banyak kendaraan (A, v2.5)
+// Tiap rekaman = satu "kendaraan" dengan kontrolnya sendiri di kartu perangkat (putar/jeda, geser waktu, kecepatan, lewati jeda).
+// Kontrol bersama (di atas daftar perangkat) bekerja pada kendaraan yang dicentang "grup".
+const RP = { quiet: false, raf: false, last: 0, lastDraw: 0 };
+let listPointer = false, listDirty = false;
+$('#devList').addEventListener('pointerdown', () => { listPointer = true; });
+window.addEventListener('pointerup', () => { if (!listPointer) return; listPointer = false; if (listDirty) { listDirty = false; setTimeout(scheduleRender, 0); } });
+window.addEventListener('pointercancel', () => { listPointer = false; });
+const rpList = () => [...devices.values()].filter((d) => d.replay && d.rp);
+const rpGroup = () => rpList().filter((d) => d.rp.grp);
+const RP_SPEEDS = [1, 2, 5, 10, 20, 50];
 const RTK_Q = { 1: 4, 2: 3, 3: 2, 4: 2, 5: 1, 6: 2 };          // RTKLIB Q -> kelas kualitas web
 const STATUS_Q = { FIX: 4, FLOAT: 3, DGNSS: 2, SINGLE: 1, TANPA_FIX: 0 };
 function splitLines(t) { return t.split(/\r?\n/); }
@@ -918,29 +930,49 @@ function posFromCsv(text) {
   }
   return out;
 }
-function vibFromImuCsv(text) {        // Map(detik GPS -> indeks getaran); 5 Hz web: kolom vib; 200 Hz SD: dihitung seperti firmware
+function imuTimeKey(cols) {           // kolom waktu IMU -> fungsi (baris) => detik GPS (bilangan bulat) atau null
+  const ix = (n) => cols.indexOf(n);
+  const iw = ix('gps_week'), it = ix('tow_s');
+  if (it >= 0) return (f) => { const t = num(f[it]); return t === null ? null : (num(f[iw]) || 0) * 604800 + t; };
+  const iu = ['time_s', 'time', 'timestamp', 'unix_s', 'unix', 't', 'epoch'].map(ix).find((i) => i >= 0);
+  if (iu === undefined) return null;
+  return (f) => {                     // waktu Unix (UTC) dalam detik atau milidetik -> detik GPS
+    let t = num(f[iu]); if (t === null || t < 1e8) return null;
+    if (t > 1e11) t /= 1000;
+    return t - GPS_EPOCH_MS / 1000 + LEAP_S;
+  };
+}
+function vibFromImuCsv(text) {        // Map(detik GPS -> indeks getaran); 5 Hz web: kolom vib; IMU mentah (100–200 Hz): dihitung seperti firmware
   const lines = splitLines(text); const hd = csvHeader(lines); const out = new Map(); if (!hd) return { map: out, kind: '' };
   const ix = (n) => hd.cols.indexOf(n);
-  const iw = ix('gps_week'), it = ix('tow_s'), iv = ix('vib'), iax = ix('ax'), iay = ix('ay'), iaz = ix('az'), itf = ix('tflag');
-  if (it < 0) return { map: out, kind: '' };
+  const iv = ix('vib'), iax = ix('ax'), iay = ix('ay'), iaz = ix('az'), itf = ix('tflag');
+  const tk = imuTimeKey(hd.cols); if (!tk) return { map: out, kind: '', err: 'kolom waktu tidak dikenali (perlu tow_s, atau time_s waktu Unix)' };
   if (iv >= 0) {
-    for (let i = hd.i + 1; i < lines.length; i++) { const f = lines[i].split(','); const v = num(f[iv]); const t = num(f[it]); if (v === null || t === null) continue;
-      const key = (num(f[iw]) || 0) * 604800 + Math.floor(t); if (!out.has(key)) out.set(key, v); }
+    for (let i = hd.i + 1; i < lines.length; i++) { const f = lines[i].split(','); const v = num(f[iv]); const t = tk(f); if (v === null || t === null) continue;
+      const key = Math.floor(t); if (!out.has(key)) out.set(key, v); }
     return { map: out, kind: 'IMU 5 Hz' };
   }
-  let key = null, acc = null, skipped = 0;
-  const fin = () => { if (acc && acc.n >= 10) { const r = vibRms(acc); if (r !== null) out.set(key, r); } };
+  if (iax < 0 || iay < 0 || iaz < 0) return { map: out, kind: '', err: 'kolom ax, ay, az tidak ada' };
+  let key = null, acc = null, skipped = 0, n = 0, gsum = 0, t0 = null, t1 = null;
+  const raw = [];
   for (let i = hd.i + 1; i < lines.length; i++) {
     const f = lines[i].split(','); if (f.length < 4) continue;
     if (itf >= 0 && Number(f[itf]) === 0) { skipped++; continue; }        // stempel waktu lokal: tidak bisa disandingkan dengan posisi
-    const t = num(f[it]); const ax = num(f[iax]), ay = num(f[iay]), az = num(f[iaz]); if (t === null || ax === null || ay === null || az === null) continue;
-    const k = (num(f[iw]) || 0) * 604800 + Math.floor(t);
-    if (k !== key) { fin(); key = k; acc = { s: [0, 0, 0], ss: [0, 0, 0, 0, 0, 0], n: 0 }; }
+    const t = tk(f); const ax = num(f[iax]), ay = num(f[iay]), az = num(f[iaz]); if (t === null || ax === null || ay === null || az === null) continue;
+    raw.push(t, ax, ay, az); n++; if (n <= 500) gsum += Math.hypot(ax, ay, az);
+    if (t0 === null) t0 = t; t1 = t;
+  }
+  const k = n && gsum / Math.min(n, 500) < 3 ? 9.80665 : 1;            // data dalam satuan g -> m/s²
+  const fin = () => { if (acc && acc.n >= 10) { const r = vibRms(acc); if (r !== null) out.set(key, r); } };
+  for (let j = 0; j < raw.length; j += 4) {
+    const kk = Math.floor(raw[j]); const ax = raw[j + 1] * k, ay = raw[j + 2] * k, az = raw[j + 3] * k;
+    if (kk !== key) { fin(); key = kk; acc = { s: [0, 0, 0], ss: [0, 0, 0, 0, 0, 0], n: 0 }; }
     acc.s[0] += ax; acc.s[1] += ay; acc.s[2] += az; acc.ss[0] += ax * ax; acc.ss[1] += ay * ay; acc.ss[2] += az * az;
     acc.ss[3] += ax * ay; acc.ss[4] += ax * az; acc.ss[5] += ay * az; acc.n++;
   }
   fin();
-  return { map: out, kind: 'IMU 200 Hz', skipped };
+  const hz = t1 > t0 ? Math.round(n / (t1 - t0)) : 0;
+  return { map: out, kind: `IMU ${hz} Hz${k !== 1 ? ' (satuan g)' : ''}`, skipped };
 }
 function vibRms(a) {                  // sama dengan VibAcc::rms() di firmware: simpangan baku percepatan searah gravitasi rata-rata
   const n = a.n; const m = [a.s[0] / n, a.s[1] / n, a.s[2] / n]; const g = Math.hypot(m[0], m[1], m[2]); if (g < 1e-6) return null;
@@ -994,56 +1026,96 @@ async function unzip(buf) {          // ZIP "store" atau "deflate" (Decompressio
   }
   return out;
 }
-async function replayFromFiles(fileList) {
+
+// ---- membaca file: banyak posisi + banyak IMU sekaligus; IMU dipasangkan ke rekaman posisi dengan rentang waktu yang paling bertumpang tindih
+async function readItems(fileList) {
   const items = [];
   for (const f of fileList) {
-    if (/\.zip$/i.test(f.name)) { for (const z of await unzip(await f.arrayBuffer())) items.push({ name: z.name.split('/').pop(), text: () => new TextDecoder().decode(z.data) }); }
+    if (/\.zip$/i.test(f.name)) { for (const z of await unzip(await f.arrayBuffer())) items.push({ name: z.name.split('/').pop(), zip: f.name, text: () => new TextDecoder().decode(z.data) }); }
     else items.push({ name: f.name, text: () => f.text() });
   }
-  let pos = null, imu = null;
+  const pos = [], imu = [];
   for (const it of items) {
     const nm = it.name.toLowerCase(); if (!/\.(csv|pos|txt)$/.test(nm)) continue;
     const text = await it.text(); const head = text.slice(0, 4000);
-    if (/\.pos$/.test(nm) || /^%.*latitude\(deg\)/im.test(head)) { if (!pos || pos.kind !== 'rtklib') pos = { kind: 'rtklib', name: it.name, text }; continue; }
+    if (/\.pos$/.test(nm) || /^%.*latitude\(deg\)/im.test(head)) { pos.push({ kind: 'rtklib', name: it.name, zip: it.zip, text }); continue; }
     const hl = (csvHeader(splitLines(head)) || { cols: [] }).cols;
-    if (hl.includes('lat') && hl.includes('lon')) { if (!pos) pos = { kind: 'csv', name: it.name, text }; }
-    else if (hl.includes('ax') && hl.includes('az') && !imu) imu = { name: it.name, text };
+    if (hl.includes('lat') && hl.includes('lon')) pos.push({ kind: 'csv', name: it.name, zip: it.zip, text });
+    else if ((hl.includes('ax') && hl.includes('az')) || hl.includes('vib')) imu.push({ name: it.name, zip: it.zip, text });
   }
-  if (!pos) { toast('Tidak ada file posisi (_pos.csv, _web_posisi.csv, atau .pos RTKLIB) di pilihan anda.', 6000); return; }
-  let pts; try { pts = pos.kind === 'rtklib' ? posFromRtklib(pos.text) : posFromCsv(pos.text); } catch (e) { toast(String(e.message || e), 7000); return; }
-  let src = pos.name;
-  if (imu) {
-    const v = vibFromImuCsv(imu.text); let hit = 0;
-    for (const p of pts) { const k = (p.wk || 0) * 604800 + Math.floor(p.tow / 1000); if (v.map.has(k)) { p.vib = v.map.get(k); hit++; } }
-    src += ` + ${imu.name} (${v.kind}${hit ? '' : ', waktu tidak cocok'})`;
-    if (!hit) toast('Waktu file IMU tidak cocok dengan file posisi: getaran tidak ditampilkan.', 6000);
-    else if (v.skipped) toast(`${v.skipped} baris IMU berstempel waktu lokal diabaikan.`, 5000);
-  }
-  const name = pos.name.replace(/\.(csv|pos|txt)$/i, '').replace(/_(web_posisi|pos)$/i, '');
-  replayStart(name, pts, src);
+  // .zip unduhan web berisi posisi + IMU 5 Hz: bila dari zip yang sama, utamakan pasangan dalam zip itu
+  return { pos, imu };
 }
-async function replayFromSession(sess) {
-  const f = await sessionFiles(sess);
-  const pts = f.pts.filter((p) => p.q > 0).map((p) => Object.assign({}, p));
-  if (!pts.length) { toast('Sesi ini tidak berisi titik posisi.'); return; }
-  replayStart(sess, pts, 'rekaman browser');
+function imuAttach(pts, v) {          // tempel indeks getaran ke titik posisi (per detik GPS); kembalikan jumlah titik yang cocok
+  let hit = 0;
+  for (const p of pts) { const k = Math.floor(p._t / 1000); if (v.map.has(k)) { p.vib = v.map.get(k); hit++; } }
+  return hit;
 }
-function replayStart(name, pts, src) {
-  if (RP.on) replayStop();
+function imuOverlap(pts, v) {
+  if (!v.map.size || !pts.length) return 0;
+  const a = Math.floor(pts[0]._t / 1000), b = Math.floor(pts[pts.length - 1]._t / 1000); let n = 0;
+  for (const k of v.map.keys()) if (k >= a && k <= b) n++;
+  return n;
+}
+function prepPts(pts) {
   pts = pts.filter((p) => p.q > 0 && isFinite(p.lat) && isFinite(p.lon));
   for (const p of pts) p._t = devTime(p);
   pts.sort((a, b) => a._t - b._t);
-  if (pts.length < 2) { toast('Titik posisi terlalu sedikit untuk diputar ulang.'); return; }
-  $('#dlgReplay').open && $('#dlgReplay').close();
-  const id = '▶ ' + (name.length > 22 ? name.slice(0, 22) + '…' : name);
-  if (devices.has(id)) removeDevice(id);
-  const d = dev(id, { replay: true, select: true }); d.src = src;
-  Object.assign(RP, { on: true, d, pts, idx: 0, t0: pts[0]._t, t1: pts[pts.length - 1]._t, cur: pts[0]._t, playing: false });
-  RP.ghost = L.polyline(pts.map((p) => [p.lat, p.lon]), { color: '#7a8899', weight: 3, opacity: 0.5, dashArray: '4 6', interactive: false }).addTo(map);
-  $('#rpName').textContent = name; $('#playBar').hidden = false; document.body.classList.add('replaying');
-  map.setView([pts[0].lat, pts[0].lon], 18); d._zoomed = true;
-  selectDevice(id); replayUi(); replayPlay(true);
-  toast(`Putar ulang ${name}: ${pts.length} titik, ${fmtDur((RP.t1 - RP.t0) / 1000)}.`, 4000);
+  return pts;
+}
+async function replayFromFiles(fileList) {
+  const { pos, imu } = await readItems(fileList);
+  if (!pos.length) { toast('Tidak ada file posisi (_pos.csv, _web_posisi.csv, atau .pos RTKLIB) di pilihan anda.', 6000); return; }
+  const tracks = [];
+  for (const f of pos) {
+    let pts; try { pts = prepPts(f.kind === 'rtklib' ? posFromRtklib(f.text) : posFromCsv(f.text)); } catch (e) { toast(`${f.name}: ${e.message || e}`, 7000); continue; }
+    if (pts.length < 2) { toast(`${f.name}: titik posisi terlalu sedikit.`, 5000); continue; }
+    tracks.push({ f, pts, name: f.name.replace(/\.(csv|pos|txt)$/i, '').replace(/_(web_posisi|pos)$/i, ''), imu: null });
+  }
+  const notes = [];
+  for (const m of imu) {
+    const v = vibFromImuCsv(m.text);
+    if (!v.map.size) { notes.push(`${m.name}: ${v.err || 'tidak terbaca'}`); continue; }
+    let best = null, bn = 0;
+    for (const t of tracks) { if (t.imu && t.imu.hit) continue; const n = imuOverlap(t.pts, v) + (m.zip && m.zip === t.f.zip ? 1e6 : 0); if (n > bn) { bn = n; best = t; } }
+    if (!best) { notes.push(`${m.name}: waktunya tidak bertumpang tindih dengan rekaman posisi mana pun`); continue; }
+    best.imu = { name: m.name, kind: v.kind, hit: imuAttach(best.pts, v), skipped: v.skipped };
+  }
+  for (const t of tracks) addReplay(t.name, t.pts, t.f.name, t.imu, false);
+  if (tracks.length) replayFitAll(tracks.length > 1 ? null : undefined);
+  const msg = tracks.map((t) => `${t.name}${t.imu ? ' + getaran (' + t.imu.kind + ')' : ''}`).join(', ');
+  if (tracks.length) toast(`Dimuat: ${msg}. Tekan ▶ pada kartu, atau "Mulai bersamaan".` + (notes.length ? ' Catatan: ' + notes.join('; ') : ''), notes.length ? 9000 : 5000);
+  else if (notes.length) toast(notes.join('; '), 8000);
+}
+async function replayFromSession(sess) {
+  const f = await sessionFiles(sess);
+  const pts = prepPts(f.pts.filter((p) => p.q > 0).map((p) => Object.assign({}, p)));
+  if (pts.length < 2) { toast('Sesi ini tidak berisi titik posisi yang cukup.'); return; }
+  addReplay(sess, pts, 'rekaman browser', { name: 'IMU 5 Hz (sesi)', kind: 'sesi', hit: pts.filter((p) => p.vib != null).length }, true);
+}
+function addReplay(name, pts, src, imu, play) {
+  let id = '▶ ' + (name.length > 22 ? name.slice(0, 22) + '…' : name); const base = id;
+  for (let k = 2; devices.has(id); k++) id = `${base} (${k})`;
+  const d = dev(id, { replay: true, select: true }); d.src = src; if (UI.rpNames && UI.rpNames[src]) d.label = UI.rpNames[src];
+  d.rp = { pts, idx: 0, t0: pts[0]._t, t1: pts[pts.length - 1]._t, cur: pts[0]._t, playing: false, speed: Number(UI.rpSpeed) || 5, skip: true, grp: true, imu, loopAt: 0,
+    ghost: L.polyline(pts.map((p) => [p.lat, p.lon]), { color: d.color, weight: 3, opacity: 0.35, dashArray: '4 7', interactive: false }).addTo(map) };
+  document.body.classList.add('replaying');
+  replaySeek(d, d.rp.t0);
+  selectDevice(id); scheduleRender();
+  if (play) { replayFitAll(); replayPlay(d, true); }
+  return d;
+}
+async function replayAddImu(d, file) {
+  try {
+    const { imu } = await readItems([file]); if (!imu.length) { toast('File itu bukan CSV IMU (perlu kolom ax, ay, az dan waktu).', 6000); return; }
+    const v = vibFromImuCsv(imu[0].text); if (!v.map.size) { toast(`${imu[0].name}: ${v.err || 'tidak terbaca'}`, 6000); return; }
+    if (!imuOverlap(d.rp.pts, v)) { toast(`Waktu ${imu[0].name} tidak bertumpang tindih dengan ${dn(d)}: getaran tidak dipasang (IMU lama tetap dipakai).`, 7000); return; }
+    for (const p of d.rp.pts) p.vib = null;
+    const hit = imuAttach(d.rp.pts, v);
+    d.rp.imu = { name: imu[0].name, kind: v.kind, hit, skipped: v.skipped };
+    replaySeek(d, d.rp.cur);
+    toast(`Getaran dari ${imu[0].name} (${v.kind}) dipasang: ${Math.round(100 * hit / d.rp.pts.length)}% titik posisi punya nilai getaran.`, 5000);
+  } catch (e) { toast('Gagal membaca IMU: ' + (e.message || e), 6000); }
 }
 function replayFeed(d, p, live) {
   d.last = p; d.lastRx = Date.now();
@@ -1056,52 +1128,172 @@ function replayReset(d) {
   d.pts = []; d.layer.clearLayers(); d.segs = []; d.cur = null; d.marker = null; d.sg = null; d.st = newStats();
   d.shocks = []; d.shockLayer.clearLayers(); d.vib = []; d.vibSec = null; d.lastShockT = -1e15; d.last = null;
 }
-function replaySeek(t) {
-  const d = RP.d; if (!d) return;
-  RP.cur = Math.max(RP.t0, Math.min(RP.t1, t));
-  replayReset(d); RP.idx = 0;
-  while (RP.idx < RP.pts.length && RP.pts[RP.idx]._t <= RP.cur) replayFeed(d, RP.pts[RP.idx++], false);
-  if (d.last) { const p = d.last; if (!map.getBounds().pad(-0.2).contains([p.lat, p.lon])) map.panTo([p.lat, p.lon], { animate: false }); }
-  replayUi(); scheduleRender(); drawVib();
+function replaySeek(d, t) {
+  const r = d.rp; r.cur = Math.max(r.t0, Math.min(r.t1, t)); r.loopAt = 0;
+  replayReset(d); r.idx = 0;
+  while (r.idx < r.pts.length && r.pts[r.idx]._t <= r.cur) replayFeed(d, r.pts[r.idx++], false);
+  if (d.last && d.id === selected && $('#chkFollow').checked) { const p = d.last; if (!map.getBounds().pad(-0.2).contains([p.lat, p.lon])) map.panTo([p.lat, p.lon], { animate: false }); }
+  rpCardUi(d); scheduleRender(); if (d.id === selected) drawVib();
 }
-function replayPlay(on) {
-  if (on && RP.idx >= RP.pts.length) replaySeek(RP.t0);      // diputar dari awal lagi
-  RP.playing = on; $('#rpPlay').textContent = on ? '❚❚' : '▶';
-  if (on) { RP.last = performance.now(); requestAnimationFrame(replayTick); }
+function replayPlay(d, on) {
+  const r = d.rp; if (on && r.idx >= r.pts.length) replaySeek(d, r.t0);      // diputar dari awal lagi
+  r.playing = on; r.loopAt = 0; rpCardUi(d); renderRpMaster();
+  if (on && !RP.raf) { RP.raf = true; RP.last = performance.now(); requestAnimationFrame(replayTick); }
 }
 function replayTick(ts) {
-  if (!RP.on || !RP.playing) return;
-  const dt = Math.min(250, ts - RP.last); RP.last = ts;
-  RP.cur += dt * Number($('#rpSpeed').value);
-  const nx = RP.pts[RP.idx];
-  if (nx && $('#rpSkip').checked && nx._t - RP.cur > 3000) RP.cur = nx._t - 200;   // lewati jeda (kendaraan berhenti / data putus)
-  while (RP.idx < RP.pts.length && RP.pts[RP.idx]._t <= RP.cur) replayFeed(RP.d, RP.pts[RP.idx++], true);
-  if (RP.idx >= RP.pts.length) { RP.cur = RP.t1; replayPlay(false); toast('Putar ulang selesai.'); }
-  replayUi();
-  if (ts - RP.lastVibDraw > 250) { RP.lastVibDraw = ts; drawVib(); scheduleRender(); }
-  if (RP.playing) requestAnimationFrame(replayTick);
+  const all = rpList(); const dt = Math.min(250, ts - RP.last); RP.last = ts; let any = false;
+  for (const d of all) {
+    const r = d.rp;
+    if (r.loopAt) { any = true; if (ts >= r.loopAt) { replaySeek(d, r.t0); r.playing = true; rpCardUi(d); } continue; }
+    if (!r.playing) continue; any = true;
+    r.cur += dt * r.speed;
+    const nx = r.pts[r.idx];
+    if (nx && r.skip && nx._t - r.cur > 3000) r.cur = nx._t - 200;                // lewati jeda (kendaraan berhenti / data putus)
+    while (r.idx < r.pts.length && r.pts[r.idx]._t <= r.cur) replayFeed(d, r.pts[r.idx++], true);
+    if (r.idx >= r.pts.length) {
+      r.cur = r.t1; r.playing = false;
+      if (UI.rpLoop) r.loopAt = ts + 2000;                                          // ulang otomatis setelah jeda 2 detik
+      else toast(`Putar ulang ${dn(d)} selesai.`);
+      renderRpMaster();
+    }
+  }
+  if (ts - RP.lastDraw > 200) { RP.lastDraw = ts; for (const d of all) rpCardUi(d); drawVib(); scheduleRender(); }
+  if (any) requestAnimationFrame(replayTick); else { RP.raf = false; for (const d of all) rpCardUi(d); renderRpMaster(); }
 }
-function replayUi() {
-  const tot = RP.t1 - RP.t0 || 1; const el = RP.cur - RP.t0;
-  if (document.activeElement !== $('#rpSlider')) $('#rpSlider').value = Math.round(1000 * el / tot);
-  $('#rpTime').textContent = `${fmtDur(el / 1000)} / ${fmtDur(tot / 1000)} · ${clockLabel(RP.cur)}`;
+function replayRemove(d) {
+  if (d.rp && d.rp.ghost) map.removeLayer(d.rp.ghost);
+  d.rp = null; removeDevice(d.id);
+  if (!rpList().length) document.body.classList.remove('replaying');
+  renderRpMaster();
 }
-function replayStop() {
-  if (!RP.on) return;
-  RP.playing = false; RP.on = false;
-  if (RP.ghost) { map.removeLayer(RP.ghost); RP.ghost = null; }
-  const id = RP.d && RP.d.id; RP.d = null; RP.pts = [];
-  $('#playBar').hidden = true; document.body.classList.remove('replaying');
-  if (id) removeDevice(id);
+function replayStop() { for (const d of rpList()) replayRemove(d); }       // tutup semua putar ulang
+function replayFitAll(onlyGroup) {
+  const ds = onlyGroup ? rpGroup() : rpList(); if (!ds.length) return;
+  const b = L.latLngBounds([]); for (const d of ds) b.extend(d.rp.ghost.getBounds());
+  if (b.isValid()) map.fitBounds(b.pad(0.12), { maxZoom: 19 });
 }
-$('#rpPlay').onclick = () => replayPlay(!RP.playing);
-$('#rpExit').onclick = replayStop;
-$('#rpSlider').addEventListener('input', () => { const tot = RP.t1 - RP.t0; replaySeek(RP.t0 + tot * Number($('#rpSlider').value) / 1000); });
+// ---- kontrol bersama
+function rpAll(cmd) {
+  const g = rpGroup(); if (!g.length) { toast('Centang "grup" pada kartu kendaraan yang ingin dikendalikan bersama.', 4000); return; }
+  if (cmd === 'sync') { for (const d of g) { replaySeek(d, d.rp.t0); } replayFitAll(true); for (const d of g) replayPlay(d, true); }
+  else if (cmd === 'play') for (const d of g) replayPlay(d, true);
+  else if (cmd === 'pause') for (const d of g) { d.rp.loopAt = 0; replayPlay(d, false); }
+}
+function renderRpMaster() {
+  const box = $('#rpMaster'); const all = rpList();
+  const mini = $('#rpMini');
+  if (!all.length) { box.hidden = true; box.innerHTML = ''; if (mini) mini.hidden = true; return; }
+  const g = rpGroup(); const playing = g.some((d) => d.rp.playing || d.rp.loopAt);
+  const sp = Number(UI.rpSpeed) || 5;
+  const html = `<div class="rpm-h"><b>Putar ulang</b> <span class="muted small">${all.length} kendaraan · ${g.length} di grup</span></div>
+    <div class="rpm-b">
+      <button class="primary" data-rpm="sync" title="Semua kendaraan di grup mulai dari awal rekamannya masing-masing pada saat yang sama">⏮▶ Mulai bersamaan</button>
+      <button data-rpm="${playing ? 'pause' : 'play'}">${playing ? '❚❚ Jeda grup' : '▶ Lanjut grup'}</button>
+      <select data-rpm="speed" title="Kecepatan untuk semua kendaraan di grup">${RP_SPEEDS.map((v) => `<option value="${v}"${v === sp ? ' selected' : ''}>${v}×</option>`).join('')}</select>
+      <label class="small nowrap"><input type="checkbox" data-rpm="loop"${UI.rpLoop ? ' checked' : ''}> ulang otomatis</label>
+    </div>
+    <div class="rpm-b">
+      <button data-rpm="fit">⤢ Tampilkan semua</button><button data-rpm="add">＋ Tambah rekaman</button><button data-rpm="close" class="danger">Tutup semua</button>
+    </div>`;
+  const key = html; if (box._k !== key) { box._k = key; if (!(document.activeElement && box.contains(document.activeElement) && document.activeElement.tagName === 'SELECT')) box.innerHTML = html; }
+  box.hidden = false;
+  if (mini) { mini.hidden = false; $('#rpMiniPlay').textContent = playing ? '❚❚' : '▶'; $('#rpMiniTxt').textContent = `${all.length} kendaraan`; }
+  const sb = $('#rpSheetBtn'); if (sb) { sb.hidden = false; sb.textContent = playing ? '❚❚' : '▶'; }
+}
+function rpMasterAct(cmd, el) {
+  if (cmd === 'sync' || cmd === 'play' || cmd === 'pause') rpAll(cmd);
+  else if (cmd === 'fit') replayFitAll();
+  else if (cmd === 'add') openReplay();
+  else if (cmd === 'close') replayStop();
+  else if (cmd === 'loop') { UI.rpLoop = el.checked; saveUi(); }
+  else if (cmd === 'speed') { UI.rpSpeed = Number(el.value); saveUi(); for (const d of rpGroup()) d.rp.speed = UI.rpSpeed; for (const d of rpList()) rpCardUi(d); scheduleRender(); }
+  renderRpMaster();
+}
+$('#rpMaster').addEventListener('click', (e) => { const b = e.target.closest('button[data-rpm]'); if (b) rpMasterAct(b.dataset.rpm, b); });
+$('#rpMaster').addEventListener('change', (e) => { const c = e.target.dataset.rpm; if (c === 'loop' || c === 'speed') rpMasterAct(c, e.target); });
+function rpToggleGroupPlay() { const g = rpGroup(); rpAll(g.some((d) => d.rp.playing || d.rp.loopAt) ? 'pause' : 'play'); }
+// ---- kartu per kendaraan
+function rpTimeText(r) {
+  const tot = r.t1 - r.t0 || 1, el = r.cur - r.t0;
+  return `${fmtDur(el / 1000)} / ${fmtDur(tot / 1000)}`;
+}
+function rpClockText(r) { const dt = new Date(GPS_EPOCH_MS + r.cur - LEAP_S * 1000); return `${clockLabel(r.cur)} · ${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`; }
+function replayCard(d, p) {
+  if (!d.rp) return "";
+  const r = d.rp; const tot = r.t1 - r.t0 || 1;
+  const imu = r.imu ? `${esc(r.imu.name)} · ${esc(r.imu.kind)} · ${Math.round(100 * r.imu.hit / r.pts.length)}% titik` : '<span class="muted">belum ada — getaran kosong</span>';
+  const st = r.loopAt ? 'mengulang…' : r.playing ? 'berjalan' : r.idx >= r.pts.length ? 'selesai' : 'dijeda';
+  return `<div class="card rpc ${selected === d.id ? 'sel' : ''}" data-id="${esc(d.id)}">
+    <h4><span class="rp-nm"><i class="dot" style="background:${d.color}"></i><span class="rp-label">${esc(dn(d))}</span><button class="icon rp-ed" data-act="rpname" title="Ganti nama">✎</button></span>
+      <span class="rp-hr"><label class="small rp-grp" title="Ikut dikendalikan tombol bersama"><input type="checkbox" data-act="rpgrp"${r.grp ? ' checked' : ''}> grup</label><span class="badge rp">${st}</span></span></h4>
+    <div class="rp-ctl">
+      <button class="primary icon" data-act="rpplay" aria-label="Putar/jeda">${r.playing || r.loopAt ? '❚❚' : '▶'}</button>
+      <input type="range" class="rp-sl" data-act="rpseek" min="0" max="1000" value="${Math.round(1000 * (r.cur - r.t0) / tot)}" aria-label="Posisi waktu">
+      <select data-act="rpspeed" aria-label="Kecepatan">${RP_SPEEDS.map((v) => `<option value="${v}"${v === r.speed ? ' selected' : ''}>${v}×</option>`).join('')}</select>
+    </div>
+    <div class="rp-ctl2 small"><span class="rp-tm">${rpTimeText(r)}</span><span class="rp-ck muted">${esc(rpClockText(r))}</span>
+      <label class="nowrap"><input type="checkbox" data-act="rpskip"${r.skip ? ' checked' : ''}> lewati jeda</label></div>
+    <div class="kv">
+      <span>Posisi</span><span class="q${p.q ?? 0}">${qName(p.q ?? 0)} · ±${fmtAcc(p.hacc)} · ${p.sv ?? '–'} sat</span>
+      <span>Kecepatan</span><span>${p.spd != null ? (p.spd * 3.6).toFixed(1) + ' km/j' : '–'}</span>
+      <span>Getaran</span><span>${p.vib != null ? p.vib.toFixed(2) + ' m/s²' : '–'}</span>
+      <span>File posisi</span><span>${esc(d.src || '')}</span>
+      <span>File IMU</span><span>${imu}</span>
+    </div>
+    <div class="actions"><button data-act="rpimu">${r.imu ? 'Ganti IMU' : '＋ IMU (.csv)'}</button><button data-act="zoom">Ke kendaraan</button><button data-act="rpclose" class="danger">✕ Tutup</button></div></div>`;
+}
+function rpCardUi(d) {               // pembaruan ringan tanpa membangun ulang kartu
+  const card = $('#devList').querySelector(`.card[data-id="${CSS.escape(d.id)}"]`); if (!card || !d.rp) return;
+  const r = d.rp; const sl = card.querySelector('.rp-sl');
+  if (sl && document.activeElement !== sl && !listPointer) sl.value = Math.round(1000 * (r.cur - r.t0) / (r.t1 - r.t0 || 1));
+  const tm = card.querySelector('.rp-tm'); if (tm) tm.textContent = rpTimeText(r);
+  const ck = card.querySelector('.rp-ck'); if (ck) ck.textContent = rpClockText(r);
+  const pb = card.querySelector('[data-act="rpplay"]'); if (pb) pb.textContent = r.playing || r.loopAt ? '❚❚' : '▶';
+}
+const imuPick = document.createElement('input'); imuPick.type = 'file'; imuPick.accept = '.csv,.txt,.zip'; imuPick.hidden = true; document.body.appendChild(imuPick);
+imuPick.addEventListener('change', () => { const d = devices.get(imuPick.dataset.id); const f = imuPick.files[0]; imuPick.value = ''; if (d && d.rp && f) replayAddImu(d, f); });
+function replayAct(id, act, el) {
+  const d = devices.get(id); if (!d || !d.rp) return;
+  if (act === 'rpplay') { if (d.rp.loopAt) { d.rp.loopAt = 0; replayPlay(d, false); } else replayPlay(d, !d.rp.playing); }
+  else if (act === 'rpclose') replayRemove(d);
+  else if (act === 'rpimu') { imuPick.dataset.id = id; imuPick.click(); }
+  else if (act === 'rpname') rpRename(d);
+}
+function rpRename(d) {
+  const card = $('#devList').querySelector(`.card[data-id="${CSS.escape(d.id)}"]`); if (!card) return;
+  const lab = card.querySelector('.rp-label'); const inp = document.createElement('input');
+  inp.className = 'rp-in'; inp.value = dn(d); inp.maxLength = 24; lab.replaceWith(inp); inp.focus(); inp.select();
+  let done = false;
+  const fin = (ok) => {
+    if (done) return; done = true;
+    const v = inp.value.trim(); if (ok && v) { d.label = v; UI.rpNames = UI.rpNames || {}; UI.rpNames[d.src] = v; saveUi(); if (d.marker) d.marker.setTooltipContent(dn(d)); }
+    inp.blur(); renderDevices(); drawVib();
+  };
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') fin(true); else if (e.key === 'Escape') fin(false); e.stopPropagation(); });
+  inp.addEventListener('blur', () => fin(true));
+  inp.addEventListener('click', (e) => e.stopPropagation());
+}
+$('#devList').addEventListener('input', (e) => {
+  if (e.target.dataset.act !== 'rpseek') return;
+  const d = devices.get(e.target.closest('.card').dataset.id); if (!d || !d.rp) return;
+  const r = d.rp; replaySeek(d, r.t0 + (r.t1 - r.t0) * Number(e.target.value) / 1000);
+});
+$('#devList').addEventListener('change', (e) => {
+  const act = e.target.dataset.act; if (!act || !act.startsWith('rp')) return;
+  const d = devices.get(e.target.closest('.card').dataset.id); if (!d || !d.rp) return;
+  if (act === 'rpspeed') d.rp.speed = Number(e.target.value);
+  else if (act === 'rpskip') d.rp.skip = e.target.checked;
+  else if (act === 'rpgrp') { d.rp.grp = e.target.checked; renderRpMaster(); }
+  e.target.blur();
+});
+$('#rpMiniPlay').onclick = rpToggleGroupPlay;
+$('#rpSheetBtn').onclick = (e) => { e.stopPropagation(); rpToggleGroupPlay(); };
+$('#rpSheetBtn').addEventListener('pointerdown', (e) => e.stopPropagation());
 async function openReplay() {
   const list = (await Store.sessions()).sort((a, b) => b.created - a.created);
   $('#rpSessList').innerHTML = list.length
     ? list.map((r) => `<div class="sess"><b>${esc(r.sess)}</b> <span class="muted">${esc(r.dev)} · ${new Date(r.created).toLocaleString()} · posisi ${(r.n && r.n.pvt) || 0}</span>
-        <div class="actions"><button data-play="${esc(r.sess)}" class="primary">▶ Putar</button></div></div>`).join('')
+        <div class="actions"><button data-play="${esc(r.sess)}" class="primary">＋ Tambahkan</button></div></div>`).join('')
     : '<span class="muted">Belum ada rekaman di browser ini.</span>';
   $('#rpFiles').value = ''; $('#dlgReplay').showModal();
 }
