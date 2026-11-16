@@ -162,7 +162,7 @@ const TRIP = (() => {
     ctx.fillStyle = fg; ctx.fillText('0', LM, H - 2); const tl = fmtDist(x1 - x0); ctx.fillText(tl, W - ctx.measureText(tl).width - 4, H - 2);
     const st = elevStats(a); const sg = (v) => (v > 0 ? '+' : '') + v.toFixed(1).replace('.', ',');
     if (cap) cap.textContent = `Tinggi ${L.h.toFixed(1)} m (${key === 'h' ? 'MSL' : 'elipsoid'}) · naik ${st.gain.toFixed(1)} m · turun ${st.loss.toFixed(1)} m`
-      + (st.grade != null ? ` · kemiringan ${sg(st.grade)}%` : '') + ' · garis abu-abu = bukan RTK fix' + (st.all ? ' · belum ada RTK: angka kasar' : '');
+      + (st.grade != null ? ` · kemiringan ${sg(st.grade)}%` : '') + (d.kind === 'traj' ? ' · garis abu-abu = ambiguitas ESKF belum fix' : ' · garis abu-abu = bukan RTK fix') + (st.all ? ' · belum ada RTK: angka kasar' : '');
     return true;
   }
   function setTab(t) {

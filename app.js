@@ -2,7 +2,7 @@
  * Tanpa server: semua berjalan di browser. Raw GNSS/IMU selama sesi disimpan di IndexedDB.
  * Format pesan: lihat PANDUAN.md bagian "Protokol". */
 'use strict';
-window.FOBOS_JS_VER = '2.5.1';        // harus sama dengan FOBOS_HTML_VER di index.html
+window.FOBOS_JS_VER = '2.6.0';        // harus sama dengan FOBOS_HTML_VER di index.html
 
 // ------------------------------------------------------------------ konfigurasi
 const DEF = { mode: 'cloud', cloudUrl: 'wss://mqtt.flespi.io:443', cloudUser: '', cloudPass: '', remember: false, autoZip: true,
@@ -582,7 +582,7 @@ async function sessionFiles(sess) {
     kelengkapan: { posisi: c.pvt, imu_5hz: c.imu, raw_ubx: c.raw },
     posisi_hilang_seq: ranges(c.pvtMiss), imu_hilang_seq: ranges(c.imuMiss), raw_hilang_seq: ranges(c.rawMiss),
     file_sd: (r.startAck && r.startAck.file) || (r.stopAck && r.stopAck.file) || null,
-    catatan: 'Salinan lengkap ada di kartu SD (<file>_raw.ubx RAWX penuh, <file>_imu.csv 200 Hz, <file>_pos.csv). '
+    catatan: 'Salinan lengkap ada di kartu SD (<file>_raw.ubx RAWX penuh, <file>_imu.csv 100 Hz, <file>_pos.csv). '
            + 'Potong bagian sesi ini dengan: python fobos_post.py cut <folder SD> --sess ' + sess };
   return { raw, pts, imu, rep };
 }
@@ -772,14 +772,14 @@ function renderSummary() {
   const d = devices.get(selected); $('#sumWho').textContent = d ? dn(d) : '';
   if (!d || !d.st.n) { $('#sumBody').innerHTML = '<span class="muted small">Belum ada jejak.</span>'; return; }
   const m = sumOf(d);
-  $('#sumBody').innerHTML = [['Jarak', m.dist], ['Durasi', m.dur], ['RTK fix', m.fix], ['Kec. maks', m.spd], ['Getaran rata²', m.vib], ['Guncangan', m.shock]]
+  $('#sumBody').innerHTML = [['Jarak', m.dist], ['Durasi', m.dur], [d.kind === 'traj' ? 'Ambiguitas fix' : 'RTK fix', m.fix], ['Kec. maks', m.spd], ['Getaran rata²', m.vib], ['Guncangan', m.shock]]
     .map(([k, v]) => `<div><span class="k">${k}</span><span class="v">${esc(v)}</span></div>`).join('')
     + (typeof TRIP !== 'undefined' ? TRIP.summaryHtml(d) : '') + (hasWx() ? WX.timelineHtml(d) : '');
 }
 function renderSheetSum() {
   const d = devices.get(selected); const el = $('#sheetSum');
   if (!d) { el.textContent = ''; return; }
-  const p = d.last || {}; el.innerHTML = `${esc(dn(d))} · <span class="q${p.q ?? 0}">${esc(qName(p.q ?? 0))}</span>${p.hacc != null ? ' ±' + esc(fmtAcc(p.hacc)) : ''}`;
+  const p = d.last || {}; el.innerHTML = `${esc(dn(d))} · <span class="q${p.q ?? 0}">${esc(p.qLabel || qName(p.q ?? 0))}</span>${p.hacc != null ? ' ±' + esc(fmtAcc(p.hacc)) : ''}`;
 }
 function renderHud() {
   if (!document.body.classList.contains('expo')) return;
@@ -931,6 +931,63 @@ function posFromCsv(text) {
   }
   return out;
 }
+// ---- trajektori hasil ESKF / KF-GINS (timestamp_s, lat_deg, lon_deg, alt_m, vn/ve/vd_ms, ... std_n/e/d_m)
+const TRAJ_Q = { full: 3, poor: 2, outage: 1 };
+function isTrajHeader(cols) { return cols.includes('lat_deg') && cols.includes('lon_deg') && cols.includes('timestamp_s'); }
+function posFromTraj(text, timeSys) {
+  const lines = splitLines(text); const hd = csvHeader(lines); if (!hd) return { pts: [], info: {} };
+  const ix = (n) => hd.cols.indexOf(n); const c = {};
+  for (const k of ['timestamp_s', 'lat_deg', 'lon_deg', 'alt_m', 'vn_ms', 've_ms', 'vd_ms', 'heading_deg', 'yaw_deg', 'roll_deg', 'pitch_deg',
+    'std_n_m', 'std_e_m', 'std_d_m', 'gnss_status', 'n_amb_fixed', 'n_sats_dop', 'hdop', 'pdop']) c[k] = ix(k);
+  const leap = timeSys === 'gpst' ? 0 : LEAP_S;           // UTC (bawaan script ESKF/KF-GINS) -> GPST: +18 s
+  const raw = [];
+  for (let i = hd.i + 1; i < lines.length; i++) {
+    const l = lines[i]; if (!l) continue; const f = l.split(',');
+    const tu = num(f[c.timestamp_s]), lat = num(f[c.lat_deg]), lon = num(f[c.lon_deg]);
+    if (tu === null || lat === null || lon === null || tu < 1e8) continue;
+    raw.push({ f, gs: tu - GPS_EPOCH_MS / 1000 + leap, lat, lon });
+  }
+  raw.sort((a, b) => a.gs - b.gs);
+  // getaran dari trajektori: percepatan vertikal = turunan vd pada grid 10 Hz, RMS per detik setelah rata-ratanya dibuang
+  const vibMap = new Map();
+  if (c.vd_ms >= 0 && raw.length > 20) {
+    const T = [], V = [];
+    for (const r of raw) { const v = num(r.f[c.vd_ms]); if (v !== null) { T.push(r.gs); V.push(v); } }
+    let j = 0; const g = [];
+    for (let t = Math.ceil(T[0] * 10) / 10; t <= T[T.length - 1]; t = Math.round((t + 0.1) * 10) / 10) {
+      while (j < T.length - 2 && T[j + 1] < t) j++;
+      const dtj = T[j + 1] - T[j]; if (!(dtj > 0) || dtj > 1) { g.push(null); continue; }
+      g.push({ t, v: V[j] + (V[j + 1] - V[j]) * (t - T[j]) / dtj });
+    }
+    let key = null, buf = [];
+    const fin = () => { if (buf.length >= 5) { const m = buf.reduce((a, b) => a + b, 0) / buf.length; vibMap.set(key, Math.sqrt(buf.reduce((a, b) => a + (b - m) * (b - m), 0) / buf.length)); } };
+    for (let k = 1; k < g.length; k++) {
+      if (!g[k] || !g[k - 1]) continue;
+      const a = (g[k].v - g[k - 1].v) / 0.1; const kk = Math.floor(g[k].t);
+      if (kk !== key) { fin(); key = kk; buf = []; }
+      buf.push(a);
+    }
+    fin();
+  }
+  // titik tampilan: paling banyak 10 Hz (keluaran laju IMU 100–200 Hz dirapikan, baris terakhir tiap 100 ms dipakai)
+  const pts = []; let lastBin = null; let nFix = 0;
+  for (let i = 0; i < raw.length; i++) {
+    const r = raw[i]; const bin = Math.floor(r.gs * 10);
+    if (i < raw.length - 1 && Math.floor(raw[i + 1].gs * 10) === bin) continue;
+    if (bin === lastBin) continue; lastBin = bin;
+    const f = r.f; const st = (f[c.gnss_status] || '').trim().toLowerCase(); const nf = num(f[c.n_amb_fixed]);
+    let q = TRAJ_Q[st] ?? 3; if (q === 3 && nf !== null && nf > 0) { q = 4; nFix++; }
+    const qLabel = q === 4 ? `ESKF fix (${nf} amb.)` : st === 'full' ? 'ESKF float' : st === 'poor' ? 'ESKF geometri lemah' : st === 'outage' ? 'ESKF tanpa GNSS (INS)' : 'ESKF';
+    const sn = num(f[c.std_n_m]), se = num(f[c.std_e_m]); const vn = num(f[c.vn_ms]), ve = num(f[c.ve_ms]);
+    let hdg = num(f[c.heading_deg]); if (hdg === null) hdg = num(f[c.yaw_deg]); if (hdg !== null) hdg = ((hdg % 360) + 360) % 360;
+    const wk = Math.floor(r.gs / 604800);
+    pts.push({ lat: r.lat, lon: r.lon, q, qLabel, h: null, hae: num(f[c.alt_m]), sv: num(f[c.n_sats_dop]),
+      hacc: sn !== null && se !== null ? Math.hypot(sn, se) : null, vacc: num(f[c.std_d_m]), slat: sn, slon: se, hdop: num(f[c.hdop]), pdop: num(f[c.pdop]),
+      spd: vn !== null && ve !== null ? Math.hypot(vn, ve) : null, hdg, roll: num(f[c.roll_deg]), pitch: num(f[c.pitch_deg]),
+      vib: vibMap.has(Math.floor(r.gs)) ? vibMap.get(Math.floor(r.gs)) : null, wk, tow: Math.round((r.gs - wk * 604800) * 1000), utc: '' });
+  }
+  return { pts, info: { rows: raw.length, vibN: vibMap.size, timeSys: timeSys === 'gpst' ? 'GPST' : 'UTC' } };
+}
 function imuTimeKey(cols) {           // kolom waktu IMU -> fungsi (baris) => detik GPS (bilangan bulat) atau null
   const ix = (n) => cols.indexOf(n);
   const iw = ix('gps_week'), it = ix('tow_s');
@@ -1041,6 +1098,7 @@ async function readItems(fileList) {
     const text = await it.text(); const head = text.slice(0, 4000);
     if (/\.pos$/.test(nm) || /^%.*latitude\(deg\)/im.test(head)) { pos.push({ kind: 'rtklib', name: it.name, zip: it.zip, text }); continue; }
     const hl = (csvHeader(splitLines(head)) || { cols: [] }).cols;
+    if (isTrajHeader(hl)) { pos.push({ kind: 'traj', name: it.name, zip: it.zip, text }); continue; }
     if (hl.includes('lat') && hl.includes('lon')) pos.push({ kind: 'csv', name: it.name, zip: it.zip, text });
     else if ((hl.includes('ax') && hl.includes('az')) || hl.includes('vib')) imu.push({ name: it.name, zip: it.zip, text });
   }
@@ -1069,22 +1127,28 @@ async function replayFromFiles(fileList) {
   if (!pos.length) { toast('Tidak ada file posisi (_pos.csv, _web_posisi.csv, atau .pos RTKLIB) di pilihan anda.', 6000); return; }
   const tracks = [];
   for (const f of pos) {
-    let pts; try { pts = prepPts(f.kind === 'rtklib' ? posFromRtklib(f.text) : posFromCsv(f.text)); } catch (e) { toast(`${f.name}: ${e.message || e}`, 7000); continue; }
+    let pts, tinfo = null;
+    try {
+      if (f.kind === 'traj') { const r = posFromTraj(f.text, UI.trajTime || 'utc'); pts = prepPts(r.pts); tinfo = r.info; }
+      else pts = prepPts(f.kind === 'rtklib' ? posFromRtklib(f.text) : posFromCsv(f.text));
+    } catch (e) { toast(`${f.name}: ${e.message || e}`, 7000); continue; }
     if (pts.length < 2) { toast(`${f.name}: titik posisi terlalu sedikit.`, 5000); continue; }
-    tracks.push({ f, pts, name: f.name.replace(/\.(csv|pos|txt)$/i, '').replace(/_(web_posisi|pos)$/i, ''), imu: null });
+    tracks.push({ f, pts, tinfo, name: f.name.replace(/\.(csv|pos|txt)$/i, '').replace(/_(web_posisi|pos)$/i, ''),
+      imu: tinfo && tinfo.vibN ? { name: 'dari trajektori', kind: 'turunan vd 10 Hz', hit: pts.filter((p) => p.vib != null).length, traj: true } : null });
   }
   const notes = [];
   for (const m of imu) {
     const v = vibFromImuCsv(m.text);
     if (!v.map.size) { notes.push(`${m.name}: ${v.err || 'tidak terbaca'}`); continue; }
     let best = null, bn = 0;
-    for (const t of tracks) { if (t.imu && t.imu.hit) continue; const n = imuOverlap(t.pts, v) + (m.zip && m.zip === t.f.zip ? 1e6 : 0); if (n > bn) { bn = n; best = t; } }
+    for (const t of tracks) { if (t.imu && t.imu.hit && !t.imu.traj) continue; const n = imuOverlap(t.pts, v) + (m.zip && m.zip === t.f.zip ? 1e6 : 0); if (n > bn) { bn = n; best = t; } }
     if (!best) { notes.push(`${m.name}: waktunya tidak bertumpang tindih dengan rekaman posisi mana pun`); continue; }
+    if (best.imu && best.imu.traj) for (const p of best.pts) p.vib = null;
     best.imu = { name: m.name, kind: v.kind, hit: imuAttach(best.pts, v), skipped: v.skipped };
   }
-  for (const t of tracks) addReplay(t.name, t.pts, t.f.name, t.imu, false);
+  for (const t of tracks) { const d = addReplay(t.name, t.pts, t.f.name, t.imu, false); if (t.tinfo) { d.kind = 'traj'; d.tinfo = t.tinfo; scheduleRender(); } }
   if (tracks.length) replayFitAll(tracks.length > 1 ? null : undefined);
-  const msg = tracks.map((t) => `${t.name}${t.imu ? ' + getaran (' + t.imu.kind + ')' : ''}`).join(', ');
+  const msg = tracks.map((t) => `${t.name}${t.tinfo ? ' [trajektori, waktu ' + t.tinfo.timeSys + ']' : ''}${t.imu ? ' + getaran (' + t.imu.kind + ')' : ''}`).join(', ');
   if (tracks.length) toast(`Dimuat: ${msg}. Tekan ▶ pada kartu, atau "Mulai bersamaan".` + (notes.length ? ' Catatan: ' + notes.join('; ') : ''), notes.length ? 9000 : 5000);
   else if (notes.length) toast(notes.join('; '), 8000);
 }
@@ -1183,7 +1247,7 @@ function rpAll(cmd) {
 function renderRpMaster() {
   const box = $('#rpMaster'); const all = rpList();
   const mini = $('#rpMini');
-  if (!all.length) { box.hidden = true; box.innerHTML = ''; if (mini) mini.hidden = true; return; }
+  if (!all.length) { box.hidden = true; box.innerHTML = ''; box._k = ''; if (mini) mini.hidden = true; return; }
   const g = rpGroup(); const playing = g.some((d) => d.rp.playing || d.rp.loopAt);
   const sp = Number(UI.rpSpeed) || 5;
   const html = `<div class="rpm-h"><b>Putar ulang</b> <span class="muted small">${all.length} kendaraan · ${g.length} di grup</span></div>
@@ -1222,7 +1286,7 @@ function rpClockText(r) { const dt = new Date(GPS_EPOCH_MS + r.cur - LEAP_S * 10
 function replayCard(d, p) {
   if (!d.rp) return "";
   const r = d.rp; const tot = r.t1 - r.t0 || 1;
-  const imu = r.imu ? `${esc(r.imu.name)} · ${esc(r.imu.kind)} · ${Math.round(100 * r.imu.hit / r.pts.length)}% titik` : '<span class="muted">belum ada — getaran kosong</span>';
+  const imu = r.imu ? `${esc(r.imu.name)} · ${esc(r.imu.kind)} · ${Math.round(100 * r.imu.hit / r.pts.length)}% titik${r.imu.traj ? ' <span class="muted">(bukan indeks IMU, nilainya lebih kecil)</span>' : ''}` : '<span class="muted">belum ada — getaran kosong</span>';
   const st = r.loopAt ? 'mengulang…' : r.playing ? 'berjalan' : r.idx >= r.pts.length ? 'selesai' : 'dijeda';
   return `<div class="card rpc ${selected === d.id ? 'sel' : ''}" data-id="${esc(d.id)}">
     <h4><span class="rp-nm"><i class="dot" style="background:${d.color}"></i><span class="rp-label">${esc(dn(d))}</span><button class="icon rp-ed" data-act="rpname" title="Ganti nama">✎</button></span>
@@ -1235,11 +1299,12 @@ function replayCard(d, p) {
     <div class="rp-ctl2 small"><span class="rp-tm">${rpTimeText(r)}</span><span class="rp-ck muted">${esc(rpClockText(r))}</span>
       <label class="nowrap"><input type="checkbox" data-act="rpskip"${r.skip ? ' checked' : ''}> lewati jeda</label></div>
     <div class="kv">
-      <span>Posisi</span><span class="q${p.q ?? 0}">${qName(p.q ?? 0)} · ±${fmtAcc(p.hacc)} · ${p.sv ?? '–'} sat</span>
+      <span>Posisi</span><span class="q${p.q ?? 0}">${esc(p.qLabel || qName(p.q ?? 0))} · ±${fmtAcc(p.hacc)} · ${p.sv ?? '–'} sat</span>
+      ${d.kind === 'traj' ? `<span>Sikap</span><span>roll ${p.roll != null ? p.roll.toFixed(1) : '–'}° · pitch ${p.pitch != null ? p.pitch.toFixed(1) : '–'}° · arah ${p.hdg != null ? p.hdg.toFixed(0) : '–'}°</span>` : ''}
       <span>Kecepatan</span><span>${p.spd != null ? (p.spd * 3.6).toFixed(1) + ' km/j' : '–'}</span>
       <span>Getaran</span><span>${p.vib != null ? p.vib.toFixed(2) + ' m/s²' : '–'}</span>
-      <span>File posisi</span><span>${esc(d.src || '')}</span>
-      <span>File IMU</span><span>${imu}</span>
+      <span>${d.kind === 'traj' ? 'Trajektori' : 'File posisi'}</span><span>${esc(d.src || '')}${d.kind === 'traj' ? ' · waktu ' + esc(d.tinfo.timeSys) : ''}</span>
+      <span>${r.imu && r.imu.traj ? 'Sumber getaran' : 'File IMU'}</span><span>${imu}</span>
     </div>
     <div class="actions"><button data-act="rpimu">${r.imu ? 'Ganti IMU' : '＋ IMU (.csv)'}</button><button data-act="zoom">Ke kendaraan</button><button data-act="rpclose" class="danger">✕ Tutup</button></div></div>`;
 }
@@ -1296,7 +1361,7 @@ async function openReplay() {
     ? list.map((r) => `<div class="sess"><b>${esc(r.sess)}</b> <span class="muted">${esc(r.dev)} · ${new Date(r.created).toLocaleString()} · posisi ${(r.n && r.n.pvt) || 0}</span>
         <div class="actions"><button data-play="${esc(r.sess)}" class="primary">＋ Tambahkan</button></div></div>`).join('')
     : '<span class="muted">Belum ada rekaman di browser ini.</span>';
-  $('#rpFiles').value = ''; $('#dlgReplay').showModal();
+  $('#rpFiles').value = ''; $('#rpTrajTime').value = UI.trajTime || 'utc'; $('#dlgReplay').showModal();
 }
 $('#rpSessList').addEventListener('click', (e) => { const s = e.target.dataset.play; if (s) { $('#dlgReplay').close(); replayFromSession(s); } });
 $('#rpFiles').addEventListener('change', async (e) => {
@@ -1305,6 +1370,7 @@ $('#rpFiles').addEventListener('change', async (e) => {
   try { await replayFromFiles(files); } catch (err) { console.error(err); toast('Gagal membaca file: ' + (err.message || err), 7000); }
 });
 $('#btnCloseReplay').onclick = () => $('#dlgReplay').close();
+$('#rpTrajTime').onchange = (e) => { UI.trajTime = e.target.value; saveUi(); };
 
 // ------------------------------------------------------------------ mulai
 (async () => {

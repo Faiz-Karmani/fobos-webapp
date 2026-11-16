@@ -7,7 +7,7 @@
 <title>Fobos Mini — Pemantauan</title>
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="lib/leaflet.css">
-<link rel="stylesheet" href="style.css?v=2.5.1">
+<link rel="stylesheet" href="style.css?v=2.6.0">
 </head>
 <body>
 <header>
@@ -156,7 +156,7 @@
 
 <dialog id="dlgSessions">
   <h3>Rekaman (Record) tersimpan di browser ini</h3>
-  <p class="small muted">Selama Record, browser menyimpan: posisi 10 Hz (CSV), IMU ringkasan 5 Hz (CSV), dan UBX RAWX 1 Hz + SFRBX. Salinan lengkap (RAWX penuh, IMU 200 Hz) selalu ada di kartu SD Fobos Mini, satu set file per nyala.</p>
+  <p class="small muted">Selama Record, browser menyimpan: posisi 10 Hz (CSV), IMU ringkasan 5 Hz (CSV), dan UBX RAWX 1 Hz + SFRBX. Salinan lengkap (RAWX penuh, IMU 100 Hz) selalu ada di kartu SD Fobos Mini, satu set file per nyala.</p>
   <div id="sessList"></div>
   <div class="row-end"><button id="btnCloseSess">Tutup</button></div>
 </dialog>
@@ -169,9 +169,11 @@
     <input type="file" id="rpFiles" multiple accept=".zip,.csv,.pos,.txt">
     <ul class="small muted tight">
       <li><b>.zip</b> hasil "Unduh semua" dari web app (berisi posisi + IMU 5 Hz)</li>
-      <li><b>F####_pos.csv</b> dari kartu SD, boleh bersama <b>F####_imu.csv</b> (getaran dihitung dari IMU 200 Hz)</li>
+      <li><b>F####_pos.csv</b> dari kartu SD, boleh bersama <b>F####_imu.csv</b> (getaran dihitung dari IMU 100 Hz)</li>
       <li><b>_web_posisi.csv</b>, atau <b>.pos RTKLIB</b> (hasil PPK, format lat/lon derajat)</li>
       <li>.zip berisi file-file di atas (terkompresi atau tidak)</li>
+      <li><b>Trajektori ESKF / KF-GINS</b> (.csv dengan kolom <code>timestamp_s, lat_deg, lon_deg, alt_m</code>, …): cukup file ini saja. Posisi, ketinggian, sikap, ketelitian, dan getaran (diturunkan dari kecepatan vertikal) langsung tampil.
+        <label class="small">Waktu <code>timestamp_s</code>: <select id="rpTrajTime"><option value="utc">UTC (bawaan script)</option><option value="gpst">GPST (--output-time-system gpst)</option></select></label></li>
       <li><b>CSV IMU</b> mentah (kolom <code>time_s</code> waktu Unix atau <code>tow_s</code>, dan <code>ax, ay, az</code>), mis. <code>imu.csv</code> 100 Hz</li>
     </ul>
     <p class="small"><b>Banyak kendaraan:</b> pilih beberapa file posisi sekaligus (Ctrl/Shift + klik). Tiap file posisi menjadi satu kendaraan. File IMU dipasangkan otomatis ke rekaman posisi yang waktunya bertumpang tindih. IMU juga bisa ditambahkan belakangan lewat tombol <b>＋ IMU</b> di kartu kendaraan. Membuka dialog ini lagi <b>menambah</b> kendaraan, tidak mengganti yang sudah ada.</p>
@@ -189,12 +191,12 @@
 <script src="lib/mqtt.min.js"></script>
 <script>
   // Penjaga versi: bila salah satu skrip gagal atau versinya tidak sama (biasanya cache browser/GitHub Pages), tampilkan petunjuk.
-  window.FOBOS_HTML_VER = '2.5.1'; window.FOBOS_ERRS = [];
+  window.FOBOS_HTML_VER = '2.6.0'; window.FOBOS_ERRS = [];
   window.addEventListener('error', function (e) { window.FOBOS_ERRS.push((e.filename || '').split('/').pop() + ': ' + e.message); });
 </script>
-<script src="app.js?v=2.5.1"></script>
-<script src="weather.js?v=2.5.1"></script>
-<script src="trip.js?v=2.5.1"></script>
+<script src="app.js?v=2.6.0"></script>
+<script src="weather.js?v=2.6.0"></script>
+<script src="trip.js?v=2.6.0"></script>
 <script>
   (function () {
     var bad = window.FOBOS_JS_VER !== window.FOBOS_HTML_VER;

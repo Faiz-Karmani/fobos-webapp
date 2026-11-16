@@ -154,10 +154,13 @@ const WX = (() => {
       const tmin = Math.min(...s.map((x) => x.t)), tmax = Math.max(...s.map((x) => x.t));
       if (tmax - tmin > 10 * 86400000) throw new Error('rentang waktu rekaman lebih dari 10 hari');
       const day = (t) => new Date(t).toISOString().slice(0, 10);
-      const old = Date.now() - tmin > 88 * 86400000;
-      const u = `${old ? OMA : OM}?latitude=${coords.map((c) => c[0]).join(',')}&longitude=${coords.map((c) => c[1]).join(',')}&hourly=${HV}`
+      // rekaman lebih dari 7 hari lalu: arsip historis (reanalisis); lebih baru: API prakiraan. Bila satu gagal, coba yang lain.
+      let old = Date.now() - tmin > 7 * 86400000;
+      const mk = (o) => `${o ? OMA : OM}?latitude=${coords.map((c) => c[0]).join(',')}&longitude=${coords.map((c) => c[1]).join(',')}&hourly=${HV}`
         + `&start_date=${day(tmin)}&end_date=${day(tmax)}&timezone=GMT&wind_speed_unit=kmh`;
-      let j = await getJson(u); if (!Array.isArray(j)) j = [j];
+      let j;
+      try { j = await getJson(mk(old)); } catch (e1) { old = !old; j = await getJson(mk(old)); }
+      if (!Array.isArray(j)) j = [j];
       for (const x of s) {
         const h = j[x.ci] && j[x.ci].hourly; if (!h || !h.time) continue;
         const i = h.time.indexOf(new Date(x.t).toISOString().slice(0, 13) + ':00'); if (i < 0 || h.weather_code[i] == null) continue;
